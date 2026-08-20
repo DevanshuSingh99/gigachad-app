@@ -43,9 +43,10 @@ emailWebhookRouter.post(
   rateLimit('inboundWebhookPerIp'),
   async (req, res) => {
     const signature = (req.headers['x-sib-webhook-signature'] as string) ?? '';
+    const authorization = req.headers.authorization;
     const rawBodyBuf = req.body as Buffer;
 
-    const result = await service.ingestInboundEmail(rawBodyBuf, signature);
+    const result = await service.ingestInboundEmail(rawBodyBuf, signature, authorization);
 
     if (result === null) {
       // Unroutable recipient — already logged at warn inside the service.
@@ -81,7 +82,8 @@ emailWebhookRouter.post(
   rateLimit('inboundWebhookPerIp'),
   async (req, res) => {
     const signature = (req.headers['x-sib-webhook-signature'] as string) ?? '';
-    await service.handleDeliveryEvent(req.body as Buffer, signature);
+    const authorization = req.headers.authorization;
+    await service.handleDeliveryEvent(req.body as Buffer, signature, authorization);
     res.json({ data: { accepted: true } });
   },
 );

@@ -85,10 +85,11 @@ export function generateMessageId(domain: string): string {
 export async function ingestInboundEmail(
   rawBody: Buffer,
   signature: string,
+  authorization?: string,
 ): Promise<IngestResult | null> {
   // ── 1a. Signature verification (fail closed — see env.ts, lib/email/provider.ts) ──
   if (env.emailWebhookVerificationEnabled) {
-    const valid = brevoProvider.verifyWebhookSignature(rawBody, signature);
+    const valid = brevoProvider.verifyWebhookSignature(rawBody, signature, authorization);
     if (!valid) {
       throw new AppError('WEBHOOK_SIGNATURE_INVALID');
     }
@@ -115,8 +116,12 @@ export async function ingestInboundEmail(
   // docs/16-errors-and-limits.md), and the same fail-closed rule applies to a
   // missing/unparseable SentAtDate.
   if (env.emailWebhookVerificationEnabled) {
-    const sentAtMs = parsed.SentAtDate ? Date.parse(parsed.SentAtDate) : NaN;
-    if (!isWebhookTimestampFresh(sentAtMs)) {
+    const sentAtMs = parsed.SentAtDate ? Date.parse(parsed.SentAtDate) : Date.now();
+    // Inbound uses the original email Date header, which can lag delivery by
+    // far more than the 5-minute replay window used for transactional events.
+    const inboundFresh =
+      Number.isFinite(sentAtMs) && Math.abs(Date.now() - sentAtMs) <= 48 * 60 * 60 * 1000;
+    if (!inboundFresh) {
       throw new AppError('WEBHOOK_SIGNATURE_INVALID');
     }
   }
@@ -131,7 +136,13 @@ export async function ingestInboundEmail(
   }
 
   // ── 3. Resolve workspace from recipient local part ────────────────────────
-  const recipientAddress = (parsed.To[0]?.Address ?? '').toLowerCase().trim();
+  const recipientAddress = (
+    parsed.Recipients?.[0] ??
+    parsed.To[0]?.Address ??
+    ''
+  )
+    .toLowerCase()
+    .trim();
   const atIndex = recipientAddress.indexOf('@');
   const localPart = atIndex >= 0 ? recipientAddress.slice(0, atIndex) : recipientAddress;
   const workspace = await repo.findWorkspaceBySlug(localPart);
@@ -318,9 +329,13 @@ export async function ingestInboundEmail(
  * Updates the EmailMessage's deliveryStatus by provider event ID.
  * Always returns normally — unrecognized events are silently discarded.
  */
-export async function handleDeliveryEvent(rawBody: Buffer, signature: string): Promise<void> {
+export async function handleDeliveryEvent(
+  rawBody: Buffer,
+  signature: string,
+  authorization?: string,
+): Promise<void> {
   if (env.emailWebhookVerificationEnabled) {
-    const valid = brevoProvider.verifyWebhookSignature(rawBody, signature);
+    const valid = brevoProvider.verifyWebhookSignature(rawBody, signature, authorization);
     if (!valid) {
       throw new AppError('WEBHOOK_SIGNATURE_INVALID');
     }

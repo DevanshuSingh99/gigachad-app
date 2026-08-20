@@ -30,6 +30,8 @@ export interface BrevoInboundPayload {
   From: BrevoAddress;
   /** First entry is the primary recipient. */
   To: BrevoAddress[];
+  /** RCPT TO addresses — prefer these over To when resolving the workspace. */
+  Recipients?: string[];
   SentAtDate?: string;
   Subject?: string;
   /** `text/plain` body — canonical content. */
@@ -72,15 +74,18 @@ export interface SendEmailResult {
 
 export interface EmailProvider {
   /**
-   * Returns true if the signature is valid.
+   * Returns true if the request is authenticated.
    *
-   * Fails closed when the signing secret is not configured: no secret means no
-   * valid HMAC can ever be computed, so every request is rejected rather than
-   * silently accepted. The env flag `emailWebhookVerificationEnabled` (tied to
-   * `env.emailEnabled`, see env.ts) governs whether this is called at all —
-   * when email is off entirely, there is nothing to verify against.
+   * Accepts either:
+   *   * legacy Sendinblue HMAC in `x-sib-webhook-signature` (hex SHA-256 of the
+   *     raw body with `BREVO_WEBHOOK_SIGNING_SECRET`), or
+   *   * modern Brevo inbound/outbound webhooks, which do not HMAC-sign the body
+   *     and instead send `Authorization: Bearer <token>` when `auth` is set on
+   *     the webhook in Brevo.
+   *
+   * Fails closed when the signing secret is not configured.
    */
-  verifyWebhookSignature(rawBody: Buffer, signature: string): boolean;
+  verifyWebhookSignature(rawBody: Buffer, signature: string, authorization?: string): boolean;
   parseInboundPayload(body: unknown): BrevoInboundPayload;
   parseEventPayload(body: unknown): BrevoEventPayload;
   sendEmail(input: SendEmailInput): Promise<SendEmailResult>;
@@ -148,30 +153,45 @@ function createTransport() {
   });
 }
 
+function timingSafeEqualString(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, 'utf8');
+  const bBuf = Buffer.from(b, 'utf8');
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
 class BrevoProvider implements EmailProvider {
-  verifyWebhookSignature(rawBody: Buffer, signature: string): boolean {
+  verifyWebhookSignature(rawBody: Buffer, signature: string, authorization?: string): boolean {
     // Fail closed: with no secret configured, no valid signature can ever be
     // computed, so every request must be rejected rather than let through
     // unauthenticated (previously this returned true here).
     if (!env.BREVO_WEBHOOK_SIGNING_SECRET) return false;
-    const hmac = crypto.createHmac('sha256', env.BREVO_WEBHOOK_SIGNING_SECRET);
+    const secret = env.BREVO_WEBHOOK_SIGNING_SECRET;
+
+    const bearer = authorization?.match(/^Bearer\s+(\S+)/i)?.[1];
+    if (bearer && timingSafeEqualString(bearer, secret)) return true;
+
+    if (signature && timingSafeEqualString(signature, secret)) return true;
+
+    const hmac = crypto.createHmac('sha256', secret);
     hmac.update(rawBody);
     const expected = hmac.digest('hex');
-    try {
-      const expectedBuf = Buffer.from(expected, 'utf8');
-      const actualBuf = Buffer.from(signature, 'utf8');
-      if (expectedBuf.length !== actualBuf.length) return false;
-      return crypto.timingSafeEqual(expectedBuf, actualBuf);
-    } catch {
-      return false;
-    }
+    if (signature && timingSafeEqualString(signature, expected)) return true;
+
+    return false;
   }
 
   parseInboundPayload(body: unknown): BrevoInboundPayload {
     if (!body || typeof body !== 'object') {
       throw new Error('Inbound webhook body is not an object');
     }
-    const b = body as Record<string, unknown>;
+    const root = body as Record<string, unknown>;
+    // Current Brevo inbound-parse webhooks wrap each email in `{ items: [...] }`.
+    const item = Array.isArray(root.items) ? root.items[0] : root;
+    if (!item || typeof item !== 'object') {
+      throw new Error('Inbound webhook missing email item');
+    }
+    const b = item as Record<string, unknown>;
     if (!Array.isArray(b.Uuid) || b.Uuid.length === 0) {
       throw new Error('Inbound webhook missing Uuid');
     }
@@ -184,7 +204,20 @@ class BrevoProvider implements EmailProvider {
     if (!Array.isArray(b.To) || b.To.length === 0) {
       throw new Error('Inbound webhook missing To');
     }
-    return body as BrevoInboundPayload;
+    const text =
+      (typeof b.Text === 'string' && b.Text) ||
+      (typeof b.RawTextBody === 'string' && b.RawTextBody) ||
+      (typeof b.ExtractedMarkdownMessage === 'string' && b.ExtractedMarkdownMessage) ||
+      '';
+    const html =
+      (typeof b.Html === 'string' && b.Html) ||
+      (typeof b.RawHtmlBody === 'string' && b.RawHtmlBody) ||
+      undefined;
+    return {
+      ...(b as unknown as BrevoInboundPayload),
+      Text: text,
+      Html: html,
+    };
   }
 
   parseEventPayload(body: unknown): BrevoEventPayload {
