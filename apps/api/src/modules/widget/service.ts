@@ -37,31 +37,52 @@ import * as repo from './repo';
  * same-origin to this app and would make the header say the wrong thing. See
  * the loader's `bootstrapSession` and this project's realtime/auth.ts for the
  * socket-handshake side of the same constraint.
+ *
+ * Two key formats are accepted:
+ *   `wk_live_…`  — workspace-level key; allowed origins come from settingsJson.
+ *   `wk_embed_…` — per-domain embed token; allowed origin is stored on the row
+ *                  and must match exactly (no list, no wildcard).
  */
 export async function createSession(
   input: CreateWidgetSessionInput,
   meta: { origin: string | undefined; userAgent: string | undefined },
 ): Promise<WidgetSessionDto> {
-  const workspace = requireFound(await repo.findWorkspaceByWidgetKey(input.widgetKey), 'workspace');
-  const settings = parseSettings(workspace.settingsJson);
+  let workspaceId: string;
 
-  if (!meta.origin || !settings.allowedWidgetOrigins.includes(meta.origin)) {
-    throw new AppError('WIDGET_ORIGIN_NOT_ALLOWED', {
-      detail: { origin: meta.origin, workspaceId: workspace.id },
-    });
+  if (input.widgetKey.startsWith('wk_embed_')) {
+    // Per-domain embed token path — stricter than the workspace key: origin must
+    // match the single stored value exactly.
+    const embedToken = await repo.findActiveEmbedToken(input.widgetKey);
+    if (!embedToken) throw notFound('workspace');
+    if (!meta.origin || meta.origin !== embedToken.allowedOrigin) {
+      throw new AppError('WIDGET_ORIGIN_NOT_ALLOWED', {
+        detail: { origin: meta.origin, allowedOrigin: embedToken.allowedOrigin },
+      });
+    }
+    workspaceId = embedToken.workspaceId;
+  } else {
+    // Workspace-level key path — original behaviour unchanged.
+    const workspace = requireFound(await repo.findWorkspaceByWidgetKey(input.widgetKey), 'workspace');
+    const settings = parseSettings(workspace.settingsJson);
+    if (!meta.origin || !settings.allowedWidgetOrigins.includes(meta.origin)) {
+      throw new AppError('WIDGET_ORIGIN_NOT_ALLOWED', {
+        detail: { origin: meta.origin, workspaceId: workspace.id },
+      });
+    }
+    workspaceId = workspace.id;
   }
 
-  const scope: WorkspaceScope = { workspaceId: workspace.id };
+  const scope: WorkspaceScope = { workspaceId };
 
   // Resume: a token only counts if it actually belongs to this workspace — a
   // token from workspace B presented against workspace A's widget key is
   // treated as absent rather than trusted, per invariant 1.
   if (input.visitorToken) {
     const existing = await findWidgetSessionByToken(input.visitorToken);
-    if (existing && existing.workspaceId === workspace.id) {
+    if (existing && existing.workspaceId === workspaceId) {
       const contact = requireFound(
         await db.contact.findFirst({
-          where: { id: existing.contactId, workspaceId: workspace.id },
+          where: { id: existing.contactId, workspaceId },
           select: { id: true, name: true },
         }),
         'contact',
@@ -84,7 +105,7 @@ export async function createSession(
 
   const session = await db.$transaction((tx) =>
     createWidgetSession(tx, {
-      workspaceId: workspace.id,
+      workspaceId,
       contactId: contact.id,
       userAgent: meta.userAgent,
       origin: meta.origin,

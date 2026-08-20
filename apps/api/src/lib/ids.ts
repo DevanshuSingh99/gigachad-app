@@ -41,3 +41,12 @@ export function newUuid(): string {
 export function newWidgetKey(): string {
   return `wk_live_${randomBytes(16).toString('hex')}`;
 }
+
+/**
+ * Per-domain embed token. The `wk_embed_` prefix distinguishes it from the
+ * workspace-level `wk_live_` key at parse time, which keeps the session
+ * endpoint's dispatch logic simple and unambiguous.
+ */
+export function newEmbedToken(): string {
+  return `wk_embed_${randomBytes(16).toString('hex')}`;
+}

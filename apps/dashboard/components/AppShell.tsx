@@ -19,6 +19,7 @@ const NAV = [
   { href: '/kb', label: 'Knowledge Base' },
   { href: '/members', label: 'Team' },
   { href: '/domains', label: 'Domains' },
+  { href: '/embed', label: 'Embed' },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {

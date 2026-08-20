@@ -175,6 +175,7 @@ model Workspace {
   emailMessages EmailMessage[]
   customDomains CustomDomain[]
   idempotencyKeys IdempotencyKey[]
+  embedTokens   EmbedToken[]
 
   @@map("workspaces")
 }
@@ -535,6 +536,30 @@ model CustomDomain {
   @@index([status, hostname])
   @@index([workspaceId])
   @@map("custom_domains")
+}
+
+// ─── Widget embed tokens ──────────────────────────────────────────────────────
+
+/// A per-domain embed token.
+///
+/// Each token carries its own allowed origin so the widget session endpoint can
+/// enforce a one-token-per-site policy without touching the workspace-level
+/// widgetKey or allowedWidgetOrigins. Tokens are prefixed `wk_embed_` to be
+/// distinguishable from the workspace key (`wk_live_`) at parse time.
+model EmbedToken {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  token         String   @unique
+  label         String
+  allowedOrigin String   @map("allowed_origin")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, isActive])
+  @@map("embed_tokens")
 }
 
 // ─── Replay protection ────────────────────────────────────────────────────────

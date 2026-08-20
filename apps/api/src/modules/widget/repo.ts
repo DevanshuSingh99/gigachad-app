@@ -1,6 +1,11 @@
 import { db, unscoped, type Tx } from '../../db';
 import type { WorkspaceScope } from '../../lib/repo';
 
+export interface ActiveEmbedToken {
+  workspaceId: string;
+  allowedOrigin: string;
+}
+
 /**
  * Widget repository.
  *
@@ -26,6 +31,21 @@ export function findWorkspaceByWidgetKey(widgetKey: string) {
     db.workspace.findUnique({
       where: { widgetKey },
       select: { id: true, settingsJson: true },
+    }),
+  );
+}
+
+/**
+ * Looks up an active per-domain embed token (`wk_embed_…`).
+ *
+ * Cross-tenant by design — the token itself is what determines which workspace
+ * and which allowed origin apply, so this query cannot be pre-scoped.
+ */
+export function findActiveEmbedToken(token: string): Promise<ActiveEmbedToken | null> {
+  return unscoped('widget session: resolve workspace from embed token', () =>
+    db.embedToken.findFirst({
+      where: { token, isActive: true },
+      select: { workspaceId: true, allowedOrigin: true },
     }),
   );
 }
