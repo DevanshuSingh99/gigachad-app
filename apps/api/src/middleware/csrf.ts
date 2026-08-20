@@ -53,6 +53,20 @@ function isExempt(path: string): boolean {
   return EXEMPT_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
+/**
+ * These POSTs *create* the CSRF cookie (via issueSessionCookies). Requiring
+ * the cookie on the way in is a deadlock: a signed-out browser has nothing
+ * to echo in `x-csrf-token`. Origin is still checked above; that is the
+ * load-bearing defence for these routes.
+ */
+function skipsDoubleSubmit(path: string): boolean {
+  return (
+    path === '/api/v1/auth/login' ||
+    path === '/api/v1/auth/signup' ||
+    /^\/api\/v1\/invitations\/[^/]+\/accept$/.test(path)
+  );
+}
+
 export function csrfMiddleware(req: Request, _res: Response, next: NextFunction): void {
   if (!STATE_CHANGING.has(req.method) || isExempt(req.path)) {
     next();
@@ -75,6 +89,11 @@ export function csrfMiddleware(req: Request, _res: Response, next: NextFunction)
       'csrf: origin mismatch',
     );
     next(new AppError('CSRF_FAILED'));
+    return;
+  }
+
+  if (skipsDoubleSubmit(req.path)) {
+    next();
     return;
   }
 
