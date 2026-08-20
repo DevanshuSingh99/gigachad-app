@@ -32,8 +32,9 @@ services:
 
   api:
     restart: unless-stopped
+    # Host :3000 is already used by invoice-gen-tool on this VM.
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3060:3000"
     deploy:
       resources:
         limits:

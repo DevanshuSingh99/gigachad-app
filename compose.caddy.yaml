@@ -1,0 +1,21 @@
+# Assignment-only overlay. Do not use while system nginx is bound to 80/443.
+# After pause-host-for-caddy.sh:
+#   COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.caddy.yaml
+#   docker compose up -d --build
+# Before restore-host-from-caddy.sh, stop Caddy first (the restore script does that).
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      api:
+        condition: service_healthy

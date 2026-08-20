@@ -1,0 +1,71 @@
+# Gigachad API + public KB
+# Install:
+#   sudo cp deploy/nginx/gigachad.devjs.in /etc/nginx/sites-available/gigachad.devjs.in
+#   sudo ln -sf /etc/nginx/sites-available/gigachad.devjs.in /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot --nginx -d gigachad-api.devjs.in -d gigachad-kb.devjs.in
+#
+# Upstream is 127.0.0.1:3060 because host :3000 is already bound by
+# invoice-gen-tool. compose.prod.yaml publishes 127.0.0.1:3060:3000.
+#
+# Certbot will add the 443 server blocks and the HTTP→HTTPS redirects.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name gigachad-api.devjs.in;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location /internal/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3060;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+        client_max_body_size 10M;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name gigachad-kb.devjs.in;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location /internal/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3060;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+        client_max_body_size 10M;
+    }
+}
