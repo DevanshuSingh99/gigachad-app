@@ -11,7 +11,6 @@ import {
   ModalHeader,
   ScrollShadow,
   Skeleton,
-  Snippet,
   useDisclosure,
 } from '@heroui/react';
 import type { EmbedTokenDto } from '@gigachad/shared';
@@ -30,7 +29,38 @@ const WIDGET_ASSET_URL =
   process.env.NEXT_PUBLIC_WIDGET_ASSET_URL ?? 'https://gigachad-app.devjs.in/widget';
 
 function scriptSnippet(token: string) {
-  return `<script\n  src="${WIDGET_ASSET_URL}/widget.js"\n  data-widget-key="${token}"\n  async\n></script>`;
+  return `<script
+  src="${WIDGET_ASSET_URL}/widget.js"
+  data-widget-key="${token}"
+  async></script>`;
+}
+
+function InstallSnippet({ token }: { token: string }) {
+  const code = scriptSnippet(token);
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="border-divider bg-default-100 min-w-0 overflow-hidden rounded-medium border">
+      <pre className="m-0 max-h-56 overflow-auto p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-all">
+        {code}
+      </pre>
+      <div className="border-divider flex justify-end border-t px-3 py-2">
+        <Button size="sm" variant="flat" onPress={() => void copy()}>
+          {copied ? 'Copied' : 'Copy snippet'}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function TokenCard({ token }: { token: EmbedTokenDto }) {
@@ -75,7 +105,7 @@ function TokenCard({ token }: { token: EmbedTokenDto }) {
       </p>
 
       {/* Snippet modal — only shown on demand so the key isn't always visible. */}
-      <Modal isOpen={snippet.isOpen} onOpenChange={snippet.onOpenChange} size="lg">
+      <Modal isOpen={snippet.isOpen} onOpenChange={snippet.onOpenChange} size="2xl" scrollBehavior="inside">
         <ModalContent>
           {(onClose: () => void) => (
             <>
@@ -89,12 +119,7 @@ function TokenCard({ token }: { token: EmbedTokenDto }) {
                   <span className="font-medium">{token.allowedOrigin}</span>. The
                   widget will only load on that exact origin.
                 </p>
-                <Snippet
-                  classNames={{ base: 'w-full whitespace-pre-wrap break-all' }}
-                  symbol=""
-                >
-                  {scriptSnippet(token.token)}
-                </Snippet>
+                <InstallSnippet token={token.token} />
               </ModalBody>
               <ModalFooter>
                 <Button variant="light" onPress={onClose}>
@@ -191,7 +216,7 @@ function EmbedScreen() {
         </div>
       </ScrollShadow>
 
-      <Modal isOpen={isOpen} onOpenChange={handleOpenChange} size="lg">
+      <Modal isOpen={isOpen} onOpenChange={handleOpenChange} size="2xl" scrollBehavior="inside">
         <ModalContent>
           {(onClose: () => void) => (
             <>
@@ -206,12 +231,7 @@ function EmbedScreen() {
                       snippet and paste it into{' '}
                       <span className="font-medium">{newToken.allowedOrigin}</span>.
                     </p>
-                    <Snippet
-                      classNames={{ base: 'w-full whitespace-pre-wrap break-all' }}
-                      symbol=""
-                    >
-                      {scriptSnippet(newToken.token)}
-                    </Snippet>
+                    <InstallSnippet token={newToken.token} />
                   </div>
                 ) : (
                   <div className="space-y-3">

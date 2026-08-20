@@ -10,7 +10,10 @@ import type { ConversationDto, MessageDto, WidgetMessageDto } from './inbox';
  * previously-issued visitor token.
  */
 
-export const widgetKeyPattern = z.string().trim().regex(/^wk_live_[a-f0-9]{32}$/, 'Invalid widget key.');
+export const widgetKeyPattern = z
+  .string()
+  .trim()
+  .regex(/^wk_(live|embed)_[a-f0-9]{32}$/, 'Invalid widget key.');
 
 /**
  * `visitorToken` is the opaque token from a PRIOR session, sent back to resume
