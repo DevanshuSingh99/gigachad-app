@@ -48,7 +48,7 @@ function panelUrl(scriptSrc: string, widgetKey: string): string {
   // carries the token so the loader's session fetch can attempt a resume). A
   // query param is what makes the key available synchronously at the panel's
   // own boot, without waiting on a postMessage round trip first.
-  const url = new URL('./panel/index.html', scriptSrc);
+  const url = new URL('./panel/', scriptSrc);
   url.searchParams.set('wk', widgetKey);
   return url.href;
 }

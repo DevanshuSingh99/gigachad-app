@@ -1,16 +1,7 @@
-# Cloudflare Pages security headers (docs/09-security.md).
-#
-# CSP is set here rather than in a <meta> tag because frame-ancestors is
-# ignored by browsers when delivered via <meta> — it only takes effect as a
-# real HTTP response header.
-#
-# Next.js static export injects small inline boot scripts; script-src 'self'
-# alone blocks hydration and the index page spinner never stops. Hashes change
-# every build, so 'unsafe-inline' is required for this export. Cloudflare
-# Web Analytics (beacon.min.js) is injected by Pages and needs its host too.
-#
-# connect-src carries both the API's https origin (REST) and its wss origin
-# (Socket.IO) — the dashboard talks to both from the same gigachad-api.devjs.in host.
+# Cloudflare Pages applies EVERY matching block (they are not overrides). Two
+# Content-Security-Policy headers are AND-ed by the browser, so `/*` must not
+# set CSP or X-Frame-Options or the widget iframe is blocked by frame-ancestors
+# 'none' even when /widget/* also sends frame-ancestors *.
 
 /widget/*
   Access-Control-Allow-Origin: *
@@ -18,9 +9,69 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
-/*
+/index.html
   Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/login/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/signup/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/members/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/inbox/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/kb/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/domains/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/invite/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/embed/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
