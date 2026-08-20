@@ -4,10 +4,22 @@
 # ignored by browsers when delivered via <meta> — it only takes effect as a
 # real HTTP response header.
 #
+# Next.js static export injects small inline boot scripts; script-src 'self'
+# alone blocks hydration and the index page spinner never stops. Hashes change
+# every build, so 'unsafe-inline' is required for this export. Cloudflare
+# Web Analytics (beacon.min.js) is injected by Pages and needs its host too.
+#
 # connect-src carries both the API's https origin (REST) and its wss origin
 # (Socket.IO) — the dashboard talks to both from the same gigachad-api.devjs.in host.
+
+/widget/*
+  Access-Control-Allow-Origin: *
+  Content-Security-Policy: default-src 'self'; connect-src https://gigachad-api.devjs.in wss://gigachad-api.devjs.in; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors *; base-uri 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
 /*
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://gigachad-api.devjs.in wss://gigachad-api.devjs.in https://static.cloudflareinsights.com https://cloudflareinsights.com; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
