@@ -2,13 +2,14 @@ import cookieParser from 'cookie-parser';
 import express, { type Express, Router } from 'express';
 import { CAPS } from '@gigachad/shared';
 
-import { corsMiddleware } from './middleware/cors';
+import { corsMiddleware, widgetCors } from './middleware/cors';
 import { errorMiddleware, notFoundMiddleware } from './middleware/error';
 import { requestIdMiddleware } from './middleware/requestId';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { healthRouter } from './internal/health';
 import { authRouter } from './modules/auth/routes';
 import { invitationAcceptRouter } from './modules/invitations/routes';
+import { widgetRouter } from './modules/widget/routes';
 import { workspacesRouter } from './modules/workspaces/routes';
 
 /**
@@ -32,8 +33,23 @@ export function createApp(): Express {
 
   app.use(requestIdMiddleware);
   app.use(cookieParser());
-  app.use(corsMiddleware());
   app.use(requestLogMiddleware);
+
+  // Widget namespace mounted BEFORE the dashboard's CORS, with its own permissive
+  // CORS and JSON parser. Order is load-bearing: Express runs middleware in
+  // registration order, so if the dashboard's strict, credentialed CORS ran
+  // first it would reject every widget request's Origin before this router ever
+  // saw it. See middleware/cors.ts's widgetCors for why the widget namespace
+  // cannot share the dashboard's CORS at all.
+  const widgetV1 = Router();
+  widgetV1.use(widgetCors);
+  widgetV1.use(express.json({ limit: CAPS.jsonBodyBytes }));
+  widgetV1.use(widgetRouter);
+  app.use('/api/v1/widget', widgetV1);
+
+  // Everything below is the dashboard-facing surface: strict, credentialed,
+  // explicit-origin CORS, applied once here rather than per-router.
+  app.use(corsMiddleware());
 
   app.use('/health', healthRouter);
 

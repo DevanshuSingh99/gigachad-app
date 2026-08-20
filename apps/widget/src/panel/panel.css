@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+
+/**
+ * Plain Tailwind, no component library — the panel is six components total,
+ * and a library here would be more bytes than the thing it builds
+ * (docs/15-frontend-and-widget.md).
+ */
+
+html,
+body,
+.gc-app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* 100dvh, never 100vh: capped at the dynamic viewport height so mobile browser
+     chrome cannot push the composer off-screen — the single most common way an
+     embedded chat widget breaks on iOS Safari (docs/15-frontend-and-widget.md). */
+  height: 100dvh;
+  overflow: hidden;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}

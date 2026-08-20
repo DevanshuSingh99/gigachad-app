@@ -3,6 +3,7 @@
 import {
   Avatar,
   Button,
+  Chip,
   Dropdown,
   DropdownItem,
   DropdownMenu,
@@ -12,12 +13,66 @@ import {
   SelectItem,
   Skeleton,
 } from '@heroui/react';
-import type { MessageDto } from '@gigachad/shared';
+import type { MessageDto, PresenceUpdatePayload, TypingPayload } from '@gigachad/shared';
+import { useEffect, useState } from 'react';
 
 import { Composer } from './Composer';
 import { ChannelChip, StatusChip } from './StatusChip';
 import { useConversation, useMessages, usePatchConversation } from '@/lib/inbox';
 import { useActiveWorkspace, useMembers, useMe } from '@/lib/session';
+import { getSocket } from '@/lib/socket';
+
+/**
+ * Joins the conversation's socket room and tracks the ephemeral state that only
+ * makes sense live: who is typing, who is online. Neither goes through TanStack
+ * Query — they are not data worth caching or refetching, just a transient
+ * reflection of the room's current activity (docs/17-caching.md's reasoning for
+ * invalidation-only sockets does not apply to state that has no REST
+ * counterpart to invalidate).
+ */
+function useConversationRoom(workspaceId: string | undefined, conversationId: string) {
+  const [typing, setTyping] = useState(false);
+  const [online, setOnline] = useState(false);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const socket = getSocket(workspaceId);
+
+    setTyping(false);
+    setOnline(false);
+
+    // lastSequence: 0 — this is a fresh subscribe, not a reconnect resuming a
+    // known position. The initial page of messages already came from the
+    // regular HTTP fetch (useMessages); conversation:sync here exists mainly to
+    // authorize the room join. A real reconnect-resume path arrives with
+    // Phase D's offline-queue work on the widget side.
+    socket.emit('conversation:subscribe', { conversationId, lastSequence: 0 });
+
+    const onTypingStart = (p: TypingPayload) => {
+      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') setTyping(true);
+    };
+    const onTypingStop = (p: TypingPayload) => {
+      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') setTyping(false);
+    };
+    const onPresence = (p: PresenceUpdatePayload) => {
+      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') {
+        setOnline(p.status === 'ONLINE');
+      }
+    };
+
+    socket.on('typing:start', onTypingStart);
+    socket.on('typing:stop', onTypingStop);
+    socket.on('presence:update', onPresence);
+
+    return () => {
+      socket.off('typing:start', onTypingStart);
+      socket.off('typing:stop', onTypingStop);
+      socket.off('presence:update', onPresence);
+    };
+  }, [workspaceId, conversationId]);
+
+  return { customerTyping: typing, customerOnline: online };
+}
 
 const SNOOZE_OPTIONS = [
   { label: '1 hour', hours: 1 },
@@ -63,6 +118,17 @@ export function ConversationDetail({
   const messages = useMessages(workspaceId, conversationId);
   const members = useMembers(workspaceId);
   const patch = usePatchConversation(workspaceId, conversationId);
+  const { customerTyping, customerOnline } = useConversationRoom(workspaceId, conversationId);
+
+  // Advances the read position once the messages a member is looking at are
+  // actually loaded — a lower value is ignored server-side, so this is safe to
+  // fire on every render where the count moved forward, not just the first.
+  useEffect(() => {
+    if (!workspaceId || !conversation.data) return;
+    const target = conversation.data.messageCount;
+    if (target <= conversation.data.agentLastReadSequence) return;
+    getSocket(workspaceId).emit('message:read', { conversationId, lastReadSequence: target });
+  }, [workspaceId, conversationId, conversation.data]);
 
   if (conversation.isPending) {
     return (
@@ -91,7 +157,14 @@ export function ConversationDetail({
 
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{c.contact.name ?? c.contact.email ?? 'Unknown contact'}</p>
-          <p className="text-default-400 truncate text-xs">{c.contact.email}</p>
+          <div className="flex items-center gap-1">
+            <p className="text-default-400 truncate text-xs">{c.contact.email}</p>
+            {/* Presence never influences authorization and is best-effort
+                (docs/06-realtime.md) — a small dot plus text, never color alone. */}
+            <Chip size="sm" variant="dot" color={customerOnline ? 'success' : 'default'} className="border-none px-0">
+              {customerOnline ? 'online' : 'offline'}
+            </Chip>
+          </div>
         </div>
 
         <ChannelChip channel={c.channel} />
@@ -170,6 +243,12 @@ export function ConversationDetail({
           </div>
         )}
       </ScrollShadow>
+
+      {customerTyping ? (
+        <p className="text-default-400 px-4 pb-1 text-xs" aria-live="polite">
+          {c.contact.name ?? 'Customer'} is typing…
+        </p>
+      ) : null}
 
       <Composer conversationId={conversationId} />
     </div>

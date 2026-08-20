@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
+import { RealtimeProvider } from '@/components/RealtimeProvider';
 import { useActiveWorkspace, useLogout, useMe } from '@/lib/session';
 
 /**
@@ -50,70 +51,75 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    // A fixed h-dvh, not min-h-dvh: min- lets the flex container grow past the
-    // viewport when content is tall, which pushes the whole page into scroll
-    // instead of confining it to the inner ScrollShadow regions — exactly the
-    // "composer scrolls out of reach" failure the responsive rules rule out
-    // (docs/15-frontend-and-widget.md).
-    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
-      <aside className="border-divider flex shrink-0 flex-col gap-4 overflow-y-auto border-b p-4 md:w-60 md:border-b-0 md:border-r">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-semibold tracking-tight">Gigachad</span>
-          <Chip size="sm" variant="flat" color={isAdmin ? 'primary' : 'default'}>
-            {workspace.role === 'ADMIN' ? 'Admin' : 'Agent'}
-          </Chip>
-        </div>
-
-        {memberships.length > 1 ? (
-          <Select
-            size="sm"
-            label="Workspace"
-            selectedKeys={[workspace.workspaceId]}
-            onChange={(e) => setWorkspaceId(e.target.value)}
-          >
-            {memberships.map((m) => (
-              <SelectItem key={m.workspaceId}>{m.workspaceName}</SelectItem>
-            ))}
-          </Select>
-        ) : (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{workspace.workspaceName}</p>
-            <p className="text-default-400 truncate text-xs">{workspace.workspaceSlug}</p>
+    <>
+      <RealtimeProvider workspaceId={workspace.workspaceId} />
+      {/*
+        A fixed h-dvh, not min-h-dvh: min- lets the flex container grow past the
+        viewport when content is tall, which pushes the whole page into scroll
+        instead of confining it to the inner ScrollShadow regions — exactly the
+        "composer scrolls out of reach" failure the responsive rules rule out
+        (docs/15-frontend-and-widget.md).
+      */}
+      <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
+        <aside className="border-divider flex shrink-0 flex-col gap-4 overflow-y-auto border-b p-4 md:w-60 md:border-b-0 md:border-r">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold tracking-tight">Gigachad</span>
+            <Chip size="sm" variant="flat" color={isAdmin ? 'primary' : 'default'}>
+              {workspace.role === 'ADMIN' ? 'Admin' : 'Agent'}
+            </Chip>
           </div>
-        )}
 
-        <nav className="flex gap-1 md:flex-col">
-          {NAV.map((item) => (
-            <Button
-              key={item.href}
-              as={Link}
-              href={item.href}
+          {memberships.length > 1 ? (
+            <Select
               size="sm"
-              variant={pathname?.startsWith(item.href) ? 'flat' : 'light'}
-              className="justify-start"
+              label="Workspace"
+              selectedKeys={[workspace.workspaceId]}
+              onChange={(e) => setWorkspaceId(e.target.value)}
             >
-              {item.label}
+              {memberships.map((m) => (
+                <SelectItem key={m.workspaceId}>{m.workspaceName}</SelectItem>
+              ))}
+            </Select>
+          ) : (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{workspace.workspaceName}</p>
+              <p className="text-default-400 truncate text-xs">{workspace.workspaceSlug}</p>
+            </div>
+          )}
+
+          <nav className="flex gap-1 md:flex-col">
+            {NAV.map((item) => (
+              <Button
+                key={item.href}
+                as={Link}
+                href={item.href}
+                size="sm"
+                variant={pathname?.startsWith(item.href) ? 'flat' : 'light'}
+                className="justify-start"
+              >
+                {item.label}
+              </Button>
+            ))}
+          </nav>
+
+          <div className="mt-auto flex flex-col gap-1">
+            <p className="text-default-400 truncate text-xs">{me.data.user.email}</p>
+            <Button
+              size="sm"
+              variant="light"
+              className="justify-start"
+              isLoading={logout.isPending}
+              onPress={() =>
+                logout.mutate(undefined, { onSuccess: () => router.replace('/login') })
+              }
+            >
+              Sign out
             </Button>
-          ))}
-        </nav>
+          </div>
+        </aside>
 
-        <div className="mt-auto flex flex-col gap-1">
-          <p className="text-default-400 truncate text-xs">{me.data.user.email}</p>
-          <Button
-            size="sm"
-            variant="light"
-            className="justify-start"
-            isLoading={logout.isPending}
-            onPress={() =>
-              logout.mutate(undefined, { onSuccess: () => router.replace('/login') })
-            }
-          >
-            Sign out
-          </Button>
-        </div>
-      </aside>
-
-      <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
-    </div>
+        <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
+      </div>
+    </>
   );
 }

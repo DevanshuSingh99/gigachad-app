@@ -6,7 +6,12 @@ import { notFound } from '../../lib/errors';
 import { isUniqueViolationOn } from '../../lib/prismaErrors';
 import { decodeCursor, requireFound, takeWithLookahead, toPage, type WorkspaceScope } from '../../lib/repo';
 import { sanitizeChatMessageHtml } from '../../lib/sanitize';
-import { allocateSequenceAndMaybeReopen, findConversationState } from '../conversations/repo';
+import {
+  allocateSequenceAndMaybeReopen,
+  findConversationState,
+  type AllocatedSequence,
+} from '../conversations/repo';
+import { emitConversationUpdated, emitMessageNew } from '../../realtime/emit';
 import { messageDto } from './dto';
 import * as repo from './repo';
 
@@ -66,8 +71,9 @@ export async function createMessage(
 
   const bodyHtml = input.bodyHtml ? sanitizeChatMessageHtml(input.bodyHtml) : undefined;
 
+  let result: { message: MessageDto; allocation: AllocatedSequence };
   try {
-    return await db.$transaction(async (tx) => {
+    result = await db.$transaction(async (tx) => {
       const allocation = await allocateSequenceAndMaybeReopen(tx, scope, conversationId, sender.type);
       if (!allocation) throw notFound('conversation');
 
@@ -82,7 +88,7 @@ export async function createMessage(
         sequence: allocation.sequence,
       });
 
-      return messageDto(created);
+      return { message: messageDto(created), allocation };
     });
   } catch (error) {
     if (isUniqueViolationOn(error, 'clientMessageId')) {
@@ -91,4 +97,30 @@ export async function createMessage(
     }
     throw error;
   }
+
+  // Persist committed above; emit now, outside the transaction (invariant 2).
+  const { message, allocation } = result;
+  emitMessageNew(scope.workspaceId, conversationId, {
+    messageId: message.id,
+    conversationId,
+    sequence: message.sequence,
+    senderType: message.senderType,
+    bodyText: message.bodyText,
+    ...(message.bodyHtml ? { bodyHtml: message.bodyHtml } : {}),
+    createdAt: message.createdAt,
+  });
+
+  // A separate broadcast, to the workspace room rather than the conversation
+  // room: it refreshes every agent's inbox list even for agents who have not
+  // opened this specific conversation and so never joined its room
+  // (docs/17-caching.md's invalidation table treats these as two distinct
+  // signals for exactly this reason).
+  emitConversationUpdated(scope.workspaceId, {
+    conversationId,
+    status: allocation.status,
+    assigneeId: allocation.assigneeId,
+    lastMessageAt: allocation.lastMessageAt.toISOString(),
+  });
+
+  return message;
 }

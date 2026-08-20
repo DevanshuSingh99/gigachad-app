@@ -1,5 +1,6 @@
 import type { AuthContext } from '../lib/authContext';
 import type { Logger } from '../lib/logger';
+import type { WidgetContext } from '../middleware/requireWidget';
 
 declare global {
   namespace Express {
@@ -16,6 +17,8 @@ declare global {
        * cannot know on its own.
        */
       auth?: AuthContext;
+      /** Set by requireWidget. Read it through widgetOf() rather than directly. */
+      widget?: WidgetContext;
     }
   }
 }

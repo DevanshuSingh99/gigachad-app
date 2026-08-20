@@ -5,14 +5,17 @@ import { db } from './db';
 import { env } from './env';
 import { logger } from './lib/logger';
 import { redis } from './lib/redis';
+import { attachSocketServer } from './realtime/io';
 
 /**
- * API entry point. Phase D attaches Socket.IO to this same HTTP server, which is
- * why the server object is created explicitly rather than using app.listen().
+ * API entry point. Socket.IO attaches to this same HTTP server rather than a
+ * second port, so one process serves REST and WebSocket traffic identically in
+ * dev and in the single-VM production deploy (docs/03-architecture.md).
  */
 
 const app = createApp();
 const server = createServer(app);
+const io = attachSocketServer(server);
 
 server.listen(env.PORT, () => {
   logger.info(
@@ -39,6 +42,7 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'shutting down');
 
   // Stop accepting connections, then give in-flight requests a bounded moment.
+  io.close();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000).unref());
   await Promise.race([closed, timeout]);

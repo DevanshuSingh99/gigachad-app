@@ -108,8 +108,13 @@ export function ConversationList({
           <Listbox
             aria-label="Conversations"
             selectionMode="single"
+            disallowEmptySelection
             selectedKeys={selectedId ? [selectedId] : []}
-            onAction={(key) => onSelect(String(key))}
+            onSelectionChange={(keys) => {
+              if (keys === 'all') return;
+              const [key] = keys;
+              if (typeof key === 'string') onSelect(key);
+            }}
           >
             {rows.map((c: ConversationDto) => (
               <ListboxItem

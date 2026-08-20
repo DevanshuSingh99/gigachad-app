@@ -153,13 +153,22 @@ export function insertAssignment(
  * Returns null when the conversation does not exist in this workspace, which the
  * caller turns into 404.
  */
+export interface AllocatedSequence {
+  sequence: number;
+  status: ConversationStatus;
+  assigneeId: string | null;
+  lastMessageAt: Date;
+}
+
 export async function allocateSequenceAndMaybeReopen(
   client: Tx,
   scope: WorkspaceScope,
   conversationId: string,
   senderType: 'AGENT' | 'CUSTOMER' | 'SYSTEM',
-): Promise<{ sequence: number; status: ConversationStatus } | null> {
-  const rows = await client.$queryRaw<Array<{ sequence: number; status: ConversationStatus }>>`
+): Promise<AllocatedSequence | null> {
+  const rows = await client.$queryRaw<
+    Array<{ sequence: number; status: ConversationStatus; assigneeId: string | null; lastMessageAt: Date }>
+  >`
     UPDATE conversations
     SET message_count = message_count + 1,
         last_message_at = now(),
@@ -174,7 +183,7 @@ export async function allocateSequenceAndMaybeReopen(
           ELSE snoozed_until
         END
     WHERE id = ${conversationId}::uuid AND workspace_id = ${scope.workspaceId}::uuid
-    RETURNING message_count AS "sequence", status
+    RETURNING message_count AS "sequence", status, assignee_id AS "assigneeId", last_message_at AS "lastMessageAt"
   `;
   return rows[0] ?? null;
 }

@@ -30,7 +30,17 @@ export type OriginResolver = (origin: string, req: Request) => boolean | Promise
 
 export const allowDashboardOrigin: OriginResolver = (origin) => origin === env.DASHBOARD_ORIGIN;
 
-export function corsMiddleware(isAllowed: OriginResolver = allowDashboardOrigin) {
+export interface CorsOptions {
+  /** Default true, matching the dashboard's cookie-based auth. */
+  credentials?: boolean;
+}
+
+export function corsMiddleware(
+  isAllowed: OriginResolver = allowDashboardOrigin,
+  options: CorsOptions = {},
+) {
+  const credentials = options.credentials ?? true;
+
   return async function cors(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Set unconditionally, including when there is no Origin: the decision to
     // vary must be visible on every response, not only the cross-origin ones.
@@ -66,7 +76,7 @@ export function corsMiddleware(isAllowed: OriginResolver = allowDashboardOrigin)
     }
 
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    if (credentials) res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Expose-Headers', EXPOSED_HEADERS);
 
     if (req.method === 'OPTIONS') {
@@ -80,3 +90,22 @@ export function corsMiddleware(isAllowed: OriginResolver = allowDashboardOrigin)
     next();
   };
 }
+
+/**
+ * The widget namespace's CORS is deliberately permissive at the transport layer
+ * — any origin gets a response it can read — because these routes carry no
+ * cookie and therefore no ambient authority a permissive origin could ride on.
+ * Authentication is a bearer token in `x-widget-token`; a page has to already
+ * possess it to do anything.
+ *
+ * The actual security boundary docs/09-security.md describes — checking a
+ * requesting `Origin` against the workspace's `allowedWidgetOrigins` — happens
+ * in application code at exactly the two points the docs name: widget session
+ * creation and the socket handshake. It cannot happen here: a CORS preflight has
+ * no body, so at the time this middleware runs there is no widget key yet to
+ * resolve a workspace from, let alone that workspace's allowlist. This
+ * middleware answers "can the browser read this response at all"; the handler
+ * answers "should this workspace be reachable from this origin", which is the
+ * question that actually matters.
+ */
+export const widgetCors = corsMiddleware(() => true, { credentials: false });

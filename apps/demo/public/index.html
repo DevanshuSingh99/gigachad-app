@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gigachad — widget demo</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin-bottom: 0.25rem;
+      }
+      p.lede {
+        color: #64748b;
+      }
+      code,
+      pre {
+        font: 13px/1.5 ui-monospace, monospace;
+      }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 16px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>This is not the dashboard.</h1>
+      <p class="lede">
+        It's an ordinary customer website — a different origin from
+        <code>app.&lt;domain&gt;</code> on purpose. The submission requires a page
+        exactly like this: somewhere the live-chat widget is genuinely installed and
+        testable, not just described.
+      </p>
+
+      <div class="card">
+        <p>The install snippet is one script tag, nothing else:</p>
+        <pre><code id="snippet">&lt;script src="http://localhost:3001/widget/widget.js"
+        data-widget-key="wk_live_4737f088d4a2a9ef588c001f6444b7b8"
+        async&gt;&lt;/script&gt;</code></pre>
+        <p>
+          Open the chat bubble in the bottom-right corner and send a message — it
+          lands in the workspace's inbox in real time, and a reply from an agent
+          appears back here the same way.
+        </p>
+      </div>
+
+      <div class="card">
+        <p>
+          Because this page is served from its own origin, it only works at all if
+          that origin is on the workspace's <code>allowedWidgetOrigins</code> list —
+          the same check a real customer's site would have to pass
+          (<code>docs/09-security.md</code>). Loading this from an unlisted origin is
+          expected to fail closed, not silently degrade.
+        </p>
+      </div>
+    </main>
+
+    <script
+      src="http://localhost:3001/widget/widget.js"
+      data-widget-key="wk_live_4737f088d4a2a9ef588c001f6444b7b8"
+      async
+    ></script>
+  </body>
+</html>

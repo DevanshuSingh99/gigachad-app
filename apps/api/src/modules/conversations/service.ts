@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { db } from '../../db';
 import { AppError, notFound } from '../../lib/errors';
 import { decodeCursor, requireFound, takeWithLookahead, toPage, type WorkspaceScope } from '../../lib/repo';
+import { emitConversationUpdated, emitMessageRead } from '../../realtime/emit';
 import { conversationDto } from './dto';
 import * as repo from './repo';
 
@@ -143,6 +144,16 @@ export async function patchConversation(
     return repo.updateConversationFields(tx, scope, conversationId, data);
   });
 
+  // Same reasoning as createMessage and markConversationRead: assign, snooze,
+  // resolve, and reopen all change what the inbox list should show, so the
+  // write path broadcasts regardless of whether this PATCH arrived over REST.
+  emitConversationUpdated(scope.workspaceId, {
+    conversationId,
+    status: updated.status,
+    assigneeId: updated.assigneeId,
+    lastMessageAt: updated.lastMessageAt.toISOString(),
+  });
+
   return conversationDto(updated);
 }
 
@@ -153,5 +164,16 @@ export async function markConversationRead(
 ): Promise<{ lastReadSequence: number }> {
   const row = await repo.updateAgentReadSequence(scope, conversationId, input.lastReadSequence);
   if (!row) throw notFound('conversation');
+
+  // Broadcast after the write, whether this call arrived over REST or a socket
+  // — same reasoning as messages/service.ts's createMessage: the write path
+  // emits, not the transport.
+  emitMessageRead(scope.workspaceId, conversationId, {
+    conversationId,
+    lastReadSequence: row.agentLastReadSequence,
+    readerType: 'AGENT',
+    at: new Date().toISOString(),
+  });
+
   return { lastReadSequence: row.agentLastReadSequence };
 }

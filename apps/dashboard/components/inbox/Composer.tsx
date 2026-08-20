@@ -1,10 +1,11 @@
 'use client';
 
 import { Button, Textarea } from '@heroui/react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { newClientMessageId, useSendMessage } from '@/lib/inbox';
 import { useActiveWorkspace } from '@/lib/session';
+import { getSocket } from '@/lib/socket';
 
 /**
  * Plain textarea, not a rich-text editor — the conversation view gets no WYSIWYG
@@ -14,8 +15,42 @@ import { useActiveWorkspace } from '@/lib/session';
  */
 export function Composer({ conversationId }: { conversationId: string }) {
   const { workspace } = useActiveWorkspace();
-  const send = useSendMessage(workspace?.workspaceId, conversationId);
+  const workspaceId = workspace?.workspaceId;
+  const send = useSendMessage(workspaceId, conversationId);
   const [text, setText] = useState('');
+
+  // Client-side debounce, not per-keystroke emission: typing:start fires once
+  // per burst, typing:stop fires ~2s after the last keystroke or immediately on
+  // send. The TTL in presence.ts is the safety net if stop is ever missed.
+  const isTypingRef = useRef(false);
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(stopTimerRef.current);
+      if (isTypingRef.current && workspaceId) {
+        getSocket(workspaceId).emit('typing:stop', { conversationId });
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
+  const handleChange = (value: string) => {
+    setText(value);
+    if (!workspaceId) return;
+    const socket = getSocket(workspaceId);
+
+    if (value.trim() && !isTypingRef.current) {
+      isTypingRef.current = true;
+      socket.emit('typing:start', { conversationId });
+    }
+
+    clearTimeout(stopTimerRef.current);
+    stopTimerRef.current = setTimeout(() => {
+      isTypingRef.current = false;
+      socket.emit('typing:stop', { conversationId });
+    }, 2_000);
+  };
 
   const submit = () => {
     const bodyText = text.trim();
@@ -23,6 +58,11 @@ export function Composer({ conversationId }: { conversationId: string }) {
     // Cleared immediately rather than waiting on the response — the composer
     // never blocks on the network, even without full optimistic rendering yet.
     setText('');
+    clearTimeout(stopTimerRef.current);
+    if (isTypingRef.current && workspaceId) {
+      isTypingRef.current = false;
+      getSocket(workspaceId).emit('typing:stop', { conversationId });
+    }
     send.mutate({ bodyText, clientMessageId: newClientMessageId() });
   };
 
@@ -34,7 +74,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
         minRows={1}
         maxRows={6}
         value={text}
-        onValueChange={setText}
+        onValueChange={handleChange}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();

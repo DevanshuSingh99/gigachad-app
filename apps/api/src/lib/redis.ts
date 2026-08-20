@@ -35,3 +35,21 @@ export const redis = createRedis();
 export function createQueueConnection(): Redis {
   return createRedis({ maxRetriesPerRequest: null, enableReadyCheck: false });
 }
+
+/**
+ * The Socket.IO Redis adapter's pub and sub connections.
+ *
+ * Wired from the start even though this deploys as one instance
+ * (docs/06-realtime.md, docs/03-architecture.md): with one instance it is inert,
+ * and with N instances `io.to(room).emit()` starts fanning out across processes
+ * with zero handler code changes — the whole point of wiring it now instead of
+ * retrofitting it under pressure at the next scale-out.
+ *
+ * Two connections, not one: a Redis connection that has SUBSCRIBEd cannot issue
+ * other commands, the same constraint createQueueConnection() exists for.
+ */
+export function createAdapterConnections(): { pubClient: Redis; subClient: Redis } {
+  const pubClient = createRedis();
+  const subClient = pubClient.duplicate();
+  return { pubClient, subClient };
+}
