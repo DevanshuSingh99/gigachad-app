@@ -162,6 +162,7 @@ export async function verifyDomain(scope: WorkspaceScope, id: string): Promise<D
   const row = requireFound(await repo.findDomain(scope, id), 'domain');
 
   const resolver = new dns.Resolver({ timeout: 5_000 });
+  resolver.setServers(['1.1.1.1', '8.8.8.8', '2606:4700:4700::1111', '2001:4860:4860::8888']);
 
   let cnameOk = false;
   let txtOk = false;
