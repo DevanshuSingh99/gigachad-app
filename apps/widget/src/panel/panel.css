@@ -31,3 +31,16 @@ body {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
+
+/* KB suggestions dropdown (panel/main.ts renderComposer). Sits above the
+   composer via Tailwind utilities (absolute/bottom-full/shadow-lg); the two
+   rules below are the bits a utility class doesn't cover. */
+.gc-suggestions {
+  z-index: 20;
+  scrollbar-width: thin;
+}
+
+.gc-suggestion:hover,
+.gc-suggestion:focus-visible {
+  cursor: pointer;
+}

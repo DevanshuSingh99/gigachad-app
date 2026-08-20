@@ -4,12 +4,14 @@ import {
   createWidgetSessionInput,
   messageListQuery,
   readInput,
+  suggestionsQuery,
 } from '@gigachad/shared';
 import { z } from 'zod';
 
 import { rateLimit } from '../../lib/rateLimit';
 import { requireWidget, widgetOf } from '../../middleware/requireWidget';
 import { parseBody, parseParams, parseQuery } from '../../middleware/validate';
+import { getArticleSuggestions } from '../kb/service';
 import * as service from './service';
 
 export const widgetRouter = Router();
@@ -63,3 +65,18 @@ widgetRouter.post('/conversations/:conversationId/read', requireWidget, async (r
   const input = parseBody(req, readInput);
   res.json({ data: await service.markRead({ workspaceId }, contactId, conversationId, input) });
 });
+
+/**
+ * KB article suggestions — prefix + trigram search fired mid-word.
+ * Debounced client-side; rate-limited per widget session server-side.
+ */
+widgetRouter.get(
+  '/suggestions',
+  requireWidget,
+  rateLimit('kbSuggestions', (req) => widgetOf(req).sessionId),
+  async (req, res) => {
+    const { workspaceId } = widgetOf(req);
+    const { q } = parseQuery(req, suggestionsQuery);
+    res.json({ data: await getArticleSuggestions({ workspaceId }, q) });
+  },
+);

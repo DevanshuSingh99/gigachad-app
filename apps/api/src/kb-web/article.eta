@@ -1,0 +1,19 @@
+<%~ include('./layout', {
+  title: it.article.title,
+  workspaceName: it.workspaceName,
+  kbRoot: it.kbRoot,
+  body: `
+  <div class="container">
+    <nav class="breadcrumb">
+      <a href="${it.kbRoot}">Help Center</a>
+      ${it.article.categoryName
+        ? `<span>›</span><a href="${it.kbRoot}?category=${it.article.categorySlug}">${escapeHtml(it.article.categoryName)}</a>`
+        : ''}
+      <span>›</span>${escapeHtml(it.article.title)}
+    </nav>
+    <article>
+      <h1 style="font-size:1.875rem;font-weight:700;margin-bottom:1.5rem">${escapeHtml(it.article.title)}</h1>
+      <div class="article-body">${it.article.bodyHtml}</div>
+    </article>
+  </div>
+`}) %>

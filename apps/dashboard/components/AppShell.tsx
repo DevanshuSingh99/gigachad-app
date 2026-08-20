@@ -16,8 +16,9 @@ import { useActiveWorkspace, useLogout, useMe } from '@/lib/session';
  */
 const NAV = [
   { href: '/inbox', label: 'Inbox' },
+  { href: '/kb', label: 'Knowledge Base' },
   { href: '/members', label: 'Team' },
-  // Knowledge base, settings, and domains arrive with their phases.
+  { href: '/domains', label: 'Domains' },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {

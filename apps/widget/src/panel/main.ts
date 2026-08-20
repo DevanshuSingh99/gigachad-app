@@ -4,6 +4,7 @@ import type {
   MessageNewPayload,
   PresenceUpdatePayload,
   ServerToClientEvents,
+  SuggestionDto,
   TypingPayload,
   WidgetMessageDto,
 } from '@gigachad/shared';
@@ -55,6 +56,19 @@ const state: State = {
 
 let socket: AppSocket | null = null;
 let composerEl: HTMLTextAreaElement | null = null;
+
+// ─── KB suggestions ─────────────────────────────────────────────────────────
+// Rendered imperatively into a dedicated element rather than through the full
+// `render()` cycle below — `render()` rebuilds the composer's <textarea> from
+// scratch on every call, which would wipe out whatever the customer is mid-
+// typing. Debounced well under the `kbSuggestions` rate limit (60/min per
+// widget session, packages/shared/src/limits.ts): a debounce only fires once
+// typing pauses, so even fast continuous typing produces far fewer than one
+// request per keystroke.
+const SUGGESTIONS_DEBOUNCE_MS = 250;
+let suggestionsListEl: HTMLUListElement | null = null;
+let suggestDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let suggestRequestSeq = 0;
 
 function apiConfig() {
   if (!state.config) throw new Error('panel used before init');
@@ -391,8 +405,73 @@ function renderTypingIndicator(): HTMLElement | null {
   return el('p', 'px-4 pb-1 text-xs text-gray-400', 'Typing…');
 }
 
+/** Clears any pending debounce and hides the dropdown. */
+function clearSuggestions(): void {
+  if (suggestDebounceTimer) {
+    clearTimeout(suggestDebounceTimer);
+    suggestDebounceTimer = null;
+  }
+  suggestRequestSeq++; // invalidates any in-flight fetch's response
+  renderSuggestionsList([]);
+}
+
+function renderSuggestionsList(items: SuggestionDto[]): void {
+  if (!suggestionsListEl) return;
+  suggestionsListEl.innerHTML = '';
+  if (items.length === 0) {
+    suggestionsListEl.classList.add('hidden');
+    return;
+  }
+  suggestionsListEl.classList.remove('hidden');
+  for (const item of items) {
+    const li = el('li');
+    const button = el(
+      'button',
+      'gc-suggestion block w-full truncate px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50',
+      item.title,
+    );
+    button.type = 'button';
+    button.setAttribute('role', 'option');
+    // mousedown (not click), with preventDefault, so the textarea never
+    // blurs — clicking a suggestion just closes the dropdown, per the
+    // current suggestion feature scope (no inline article reader yet).
+    button.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      clearSuggestions();
+      composerEl?.focus();
+    });
+    li.appendChild(button);
+    suggestionsListEl.appendChild(li);
+  }
+}
+
+async function fetchSuggestions(query: string): Promise<void> {
+  if (!state.config) return;
+  const mySeq = ++suggestRequestSeq;
+  try {
+    const results = await widgetFetch<SuggestionDto[]>(
+      apiConfig(),
+      `/api/v1/widget/suggestions?q=${encodeURIComponent(query)}`,
+    );
+    if (mySeq !== suggestRequestSeq) return; // superseded by a newer keystroke/blur
+    renderSuggestionsList(results);
+  } catch {
+    if (mySeq !== suggestRequestSeq) return;
+    renderSuggestionsList([]);
+  }
+}
+
 function renderComposer(): HTMLElement {
-  const wrap = el('div', 'flex items-end gap-2 border-t border-gray-200 p-3');
+  const outer = el('div', 'relative border-t border-gray-200 p-3');
+
+  const suggestions = document.createElement('ul');
+  suggestions.className =
+    'gc-suggestions hidden absolute bottom-full left-3 right-3 mb-1 max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg';
+  suggestions.setAttribute('role', 'listbox');
+  suggestions.setAttribute('aria-label', 'Suggested articles');
+  suggestionsListEl = suggestions;
+
+  const wrap = el('div', 'flex items-end gap-2');
 
   const textarea = document.createElement('textarea');
   textarea.className =
@@ -405,9 +484,25 @@ function renderComposer(): HTMLElement {
       e.preventDefault();
       const value = textarea.value;
       textarea.value = '';
+      clearSuggestions();
       submitMessage(value);
     }
     if (e.key === 'Escape') postToLoader({ type: 'closeRequest' });
+  });
+  textarea.addEventListener('input', () => {
+    const query = textarea.value.trim();
+    if (suggestDebounceTimer) clearTimeout(suggestDebounceTimer);
+    if (!query) {
+      clearSuggestions();
+      return;
+    }
+    suggestDebounceTimer = setTimeout(() => void fetchSuggestions(query), SUGGESTIONS_DEBOUNCE_MS);
+  });
+  textarea.addEventListener('blur', () => {
+    // Deferred: a suggestion button's own `mousedown` handler runs first and
+    // calls clearSuggestions() itself; this is the fallback for blur caused by
+    // anything else (tabbing away, clicking outside the panel).
+    setTimeout(clearSuggestions, 150);
   });
   composerEl = textarea;
 
@@ -416,12 +511,15 @@ function renderComposer(): HTMLElement {
   sendBtn.addEventListener('click', () => {
     const value = textarea.value;
     textarea.value = '';
+    clearSuggestions();
     submitMessage(value);
   });
 
   wrap.appendChild(textarea);
   wrap.appendChild(sendBtn);
-  return wrap;
+  outer.appendChild(suggestions);
+  outer.appendChild(wrap);
+  return outer;
 }
 
 function render(): void {

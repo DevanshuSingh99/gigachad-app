@@ -17,6 +17,8 @@ import type { MessageDto, PresenceUpdatePayload, TypingPayload } from '@gigachad
 import { useEffect, useState } from 'react';
 
 import { Composer } from './Composer';
+import { DeliveryBadge, EmailComposer } from './EmailComposer';
+import { SummaryPanel } from './SummaryPanel';
 import { ChannelChip, StatusChip } from './StatusChip';
 import { useConversation, useMessages, usePatchConversation } from '@/lib/inbox';
 import { useActiveWorkspace, useMembers, useMe } from '@/lib/session';
@@ -81,7 +83,15 @@ const SNOOZE_OPTIONS = [
   { label: '1 week', hours: 24 * 7 },
 ] as const;
 
-function MessageBubble({ message, isOwn }: { message: MessageDto; isOwn: boolean }) {
+function MessageBubble({
+  message,
+  isOwn,
+  isEmail,
+}: {
+  message: MessageDto;
+  isOwn: boolean;
+  isEmail?: boolean;
+}) {
   const fromCustomer = message.senderType === 'CUSTOMER';
   return (
     <div className={`flex gap-2 ${fromCustomer ? '' : 'flex-row-reverse'}`}>
@@ -94,11 +104,16 @@ function MessageBubble({ message, isOwn }: { message: MessageDto; isOwn: boolean
         >
           {message.bodyText}
         </div>
-        <span className="text-default-400 text-xs">
-          {!fromCustomer && message.senderName ? `${message.senderName} · ` : ''}
-          {new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-          {isOwn ? ' · you' : ''}
-        </span>
+        <div className="flex items-center gap-1">
+          <span className="text-default-400 text-xs">
+            {!fromCustomer && message.senderName ? `${message.senderName} · ` : ''}
+            {new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            {isOwn ? ' · you' : ''}
+          </span>
+          {isEmail && !fromCustomer && message.deliveryStatus !== 'PENDING' ? (
+            <DeliveryBadge status={message.deliveryStatus} />
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -147,7 +162,9 @@ export function ConversationDetail({
   const rows = messages.data?.items ?? [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col lg:flex-row">
+      {/* Main column: header + messages + composer */}
+      <div className="flex min-h-0 flex-1 flex-col">
       <header className="border-divider flex flex-wrap items-center gap-2 border-b p-3">
         {onBack ? (
           <Button isIconOnly size="sm" variant="light" onPress={onBack} aria-label="Back to list">
@@ -238,6 +255,7 @@ export function ConversationDetail({
                 key={m.id}
                 message={m}
                 isOwn={m.senderType === 'AGENT' && m.senderUserId === me.data?.user.id}
+                isEmail={c.channel === 'EMAIL'}
               />
             ))}
           </div>
@@ -250,7 +268,17 @@ export function ConversationDetail({
         </p>
       ) : null}
 
-      <Composer conversationId={conversationId} />
+      {c.channel === 'EMAIL' ? (
+        <EmailComposer conversationId={conversationId} />
+      ) : (
+        <Composer conversationId={conversationId} />
+      )}
+      </div>{/* end main column */}
+
+      {/* AI summary rail — always visible at lg, hidden below */}
+      <aside className="border-divider hidden w-72 shrink-0 overflow-y-auto border-l lg:block">
+        <SummaryPanel conversationId={conversationId} />
+      </aside>
     </div>
   );
 }

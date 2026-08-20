@@ -1,0 +1,15 @@
+# Cloudflare Pages security headers (docs/09-security.md).
+#
+# CSP is set here rather than in a <meta> tag because frame-ancestors is
+# ignored by browsers when delivered via <meta> — it only takes effect as a
+# real HTTP response header. Replace APEX_DOMAIN with the real apex domain
+# (same value as .env's APEX_DOMAIN) before deploying.
+#
+# connect-src carries both the API's https origin (REST) and its wss origin
+# (Socket.IO) — the dashboard talks to both from the same api.APEX_DOMAIN host.
+/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.APEX_DOMAIN wss://api.APEX_DOMAIN; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

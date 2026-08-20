@@ -53,12 +53,31 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   workspaceId?: string;
 }
 
+const STATE_CHANGING = new Set(['POST', 'PATCH', 'DELETE', 'PUT']);
+
+/**
+ * Reads the `gc_csrf` cookie set by the API (apps/api/src/lib/cookies.ts).
+ * It's deliberately non-HttpOnly so this can read it and echo it back as a
+ * header — the double-submit half of CSRF defense (apps/api/src/middleware/csrf.ts).
+ */
+function readCsrfCookie(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)gc_csrf=([^;]*)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, workspaceId, headers, ...rest } = options;
 
   const requestHeaders = new Headers(headers);
   if (body !== undefined) requestHeaders.set('content-type', 'application/json');
   if (workspaceId) requestHeaders.set('x-workspace-id', workspaceId);
+
+  const method = (rest.method ?? 'GET').toUpperCase();
+  if (STATE_CHANGING.has(method)) {
+    const csrfToken = readCsrfCookie();
+    if (csrfToken) requestHeaders.set('x-csrf-token', csrfToken);
+  }
 
   let response: Response;
   try {

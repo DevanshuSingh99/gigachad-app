@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { clientMessageId, messageText, uuid } from './primitives';
 import type { ErrorCode } from './errors';
-import type { ConversationStatus, SenderType } from './enums';
+import type { ConversationStatus, DeliveryStatus, SenderType } from './enums';
 
 /**
  * Socket event contract. Single source of truth for the event list and semantics:
@@ -72,6 +72,18 @@ export interface MessageNewPayload {
   createdAt: string;
 }
 
+/**
+ * A message's delivery status changed after it was created — e.g. an outbound
+ * email moved PENDING → SENT/FAILED, or an inbound delivery event updated an
+ * existing message. Distinct from `message:new` (which announces creation) so
+ * a client only has to invalidate the one query it actually needs.
+ */
+export interface MessageUpdatedPayload {
+  messageId: string;
+  conversationId: string;
+  deliveryStatus: DeliveryStatus;
+}
+
 export interface MessageFailedPayload {
   clientMessageId: string;
   code: ErrorCode;
@@ -130,6 +142,7 @@ export const SOCKET_EVENTS = {
   messageSend: 'message:send',
   messageAccepted: 'message:accepted',
   messageNew: 'message:new',
+  messageUpdated: 'message:updated',
   messageFailed: 'message:failed',
   messageRead: 'message:read',
   typingStart: 'typing:start',
@@ -144,6 +157,7 @@ export interface ServerToClientEvents {
   'conversation:updated': (p: ConversationUpdatedPayload) => void;
   'message:accepted': (p: MessageAcceptedPayload) => void;
   'message:new': (p: MessageNewPayload) => void;
+  'message:updated': (p: MessageUpdatedPayload) => void;
   'message:failed': (p: MessageFailedPayload) => void;
   'message:read': (p: MessageReadPayload) => void;
   'typing:start': (p: TypingPayload) => void;

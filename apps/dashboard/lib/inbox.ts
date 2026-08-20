@@ -5,6 +5,7 @@ import type {
   ConversationListQuery,
   ContactDetailDto,
   CreateMessageInput,
+  EmailReplyInput,
   MessageDto,
   Page,
   PatchConversationInput,
@@ -123,6 +124,23 @@ export function usePatchConversation(workspaceId: string | undefined, conversati
       ),
     onSuccess: () => {
       if (workspaceId && conversationId) invalidateConversation(queryClient, workspaceId, conversationId);
+    },
+  });
+}
+
+export function useEmailReply(workspaceId: string | undefined, conversationId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EmailReplyInput) =>
+      apiFetch<MessageDto>(
+        `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/email-reply`,
+        { method: 'POST', body: input },
+      ),
+    onSuccess: () => {
+      if (workspaceId && conversationId) {
+        void queryClient.invalidateQueries({ queryKey: messagesKey(workspaceId, conversationId) });
+        invalidateConversation(queryClient, workspaceId, conversationId);
+      }
     },
   });
 }

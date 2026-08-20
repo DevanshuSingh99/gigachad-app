@@ -4,21 +4,50 @@ import { createPrismaClient } from './db';
 import { logger } from './lib/logger';
 import { createQueueConnection } from './lib/redis';
 import { TIMEOUTS } from '@gigachad/shared';
+import { createEmailSendWorker, onEmailSendFailed } from './modules/email/jobs/emailSendJob';
+import { createAiSummaryWorker } from './modules/ai/jobs/summaryJob';
+import type { EmailSendJobData } from './lib/email/queue';
 
 /**
  * Worker entry point. Runs from the same image as the API but as its own process,
  * so a long LLM call or a provider retry never occupies a request handler.
  *
- * Jobs are registered here by later phases: AI summaries (Phase G), outbound email
- * and delivery retries (Phase E), and domain verification (Phase H). All of them
- * are idempotent and operate only on committed ids.
+ * Jobs registered here: outbound email send (Phase E). AI summaries and domain
+ * verification follow in Phases G and H.
  */
 
 /** A worker gets a longer statement timeout than a request handler. */
 const db = createPrismaClient({ statementTimeoutMs: TIMEOUTS.dbStatementWorkerMs });
 const connection = createQueueConnection();
 
-const workers: Worker[] = [];
+// ─── Email send worker ────────────────────────────────────────────────────────
+
+const emailWorker = createEmailSendWorker(db, connection);
+
+emailWorker.on('failed', (job, err) => {
+  logger.error({ jobId: job?.id, err }, 'email send job failed');
+  void onEmailSendFailed(db, job as { data: EmailSendJobData } | undefined);
+});
+
+emailWorker.on('completed', (job) => {
+  logger.info({ jobId: job.id }, 'email send job completed');
+});
+
+// ─── AI summary worker ────────────────────────────────────────────────────────
+
+const aiWorker = createAiSummaryWorker(db, connection);
+
+aiWorker.on('failed', (job, err) => {
+  logger.error({ jobId: job?.id, err }, 'ai summary job failed');
+});
+
+aiWorker.on('completed', (job) => {
+  logger.info({ jobId: job.id }, 'ai summary job completed');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const workers: Worker[] = [emailWorker, aiWorker];
 
 logger.info({ workers: workers.length }, 'worker started');
 

@@ -83,8 +83,17 @@ export const RATE_LIMITS = {
   aiSummaryPerConversation: { limit: 5, windowSeconds: 5 * 60, key: 'conversation' },
   aiSummaryPerWorkspaceDay: { limit: 200, windowSeconds: 24 * 60 * 60, key: 'workspace' },
   domainVerify: { limit: 10, windowSeconds: 60 * 60, key: 'workspace' },
-  tlsAsk: { limit: 5, windowSeconds: 2 * 60, key: 'hostname' },
+  // Keyed by caller IP (Caddy's container IP in production), not by the
+  // attacker-controlled `domain` query param — see tlsAsk.ts. Paired with a
+  // generous global backstop, same shape as loginPerIp/loginPerEmail below.
+  tlsAsk: { limit: 5, windowSeconds: 2 * 60, key: 'ip' },
+  tlsAskGlobal: { limit: 60, windowSeconds: 2 * 60, key: 'global' },
   inboundWebhook: { limit: 600, windowSeconds: 60, key: 'global' },
+  // Layered on top of the global cap above (same pair shape as
+  // tlsAsk/tlsAskGlobal), so one attacker IP cannot exhaust the shared budget
+  // that legitimate provider traffic needs. Not documented with an exact
+  // number, so this uses 1/5th of the global cap as a reasonable default.
+  inboundWebhookPerIp: { limit: 120, windowSeconds: 60, key: 'ip' },
 } as const satisfies Record<string, { limit: number; windowSeconds: number; key: string }>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;

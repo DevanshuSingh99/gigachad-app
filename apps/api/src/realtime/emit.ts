@@ -1,5 +1,11 @@
 import { conversationRoom, workspaceRoom } from '@gigachad/shared';
-import type { ConversationUpdatedPayload, MessageNewPayload, MessageReadPayload } from '@gigachad/shared';
+import type {
+  ConversationUpdatedPayload,
+  MessageNewPayload,
+  MessageReadPayload,
+  MessageUpdatedPayload,
+  SummaryUpdatedPayload,
+} from '@gigachad/shared';
 
 import type { IoServer } from './types';
 
@@ -26,10 +32,33 @@ export function emitMessageNew(workspaceId: string, conversationId: string, payl
   ioRef?.to(conversationRoom(workspaceId, conversationId)).emit('message:new', payload);
 }
 
+/**
+ * Emitted when an existing message's delivery status changes after creation —
+ * e.g. an outbound email's webhook-driven PENDING → SENT/DELIVERED/FAILED/
+ * BOUNCED transition (modules/email/service.ts, modules/email/jobs/emailSendJob.ts).
+ * Same room as `message:new` so a client already subscribed to the
+ * conversation picks it up without a separate join.
+ */
+export function emitMessageUpdated(
+  workspaceId: string,
+  conversationId: string,
+  payload: MessageUpdatedPayload,
+): void {
+  ioRef?.to(conversationRoom(workspaceId, conversationId)).emit('message:updated', payload);
+}
+
 export function emitConversationUpdated(workspaceId: string, payload: ConversationUpdatedPayload): void {
   ioRef?.to(workspaceRoom(workspaceId)).emit('conversation:updated', payload);
 }
 
 export function emitMessageRead(workspaceId: string, conversationId: string, payload: MessageReadPayload): void {
   ioRef?.to(conversationRoom(workspaceId, conversationId)).emit('message:read', payload);
+}
+
+export function emitSummaryUpdated(
+  workspaceId: string,
+  conversationId: string,
+  payload: SummaryUpdatedPayload,
+): void {
+  ioRef?.to(conversationRoom(workspaceId, conversationId)).emit('summary:updated', payload);
 }

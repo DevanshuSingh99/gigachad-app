@@ -30,6 +30,12 @@ export function RealtimeProvider({ workspaceId }: { workspaceId: string }) {
       void queryClient.invalidateQueries({ queryKey: messagesKey(workspaceId, payload.conversationId) });
       invalidateConversations();
     };
+    // A message already in the list changed (e.g. an outbound email's delivery
+    // status) — only the messages query needs to refetch, not the conversation
+    // list, since nothing about the conversation summary itself changed.
+    const onMessageUpdated = (payload: { conversationId: string }) => {
+      void queryClient.invalidateQueries({ queryKey: messagesKey(workspaceId, payload.conversationId) });
+    };
     const onConversationUpdated = (payload: { conversationId: string }) => {
       void queryClient.invalidateQueries({ queryKey: conversationKey(workspaceId, payload.conversationId) });
       invalidateConversations();
@@ -39,11 +45,13 @@ export function RealtimeProvider({ workspaceId }: { workspaceId: string }) {
     };
 
     socket.on('message:new', onMessageNew);
+    socket.on('message:updated', onMessageUpdated);
     socket.on('conversation:updated', onConversationUpdated);
     socket.on('message:read', onMessageRead);
 
     return () => {
       socket.off('message:new', onMessageNew);
+      socket.off('message:updated', onMessageUpdated);
       socket.off('conversation:updated', onConversationUpdated);
       socket.off('message:read', onMessageRead);
     };

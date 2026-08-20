@@ -15,12 +15,27 @@
 	}
 }
 
+# /internal/* (the ask endpoint above, plus anything else mounted there) must
+# never be reachable from outside the Docker network — that's the network
+# boundary docs/09-security.md and the route's own doc comment both assume.
+# Caddy's own on_demand_tls `ask` call above hits the api container directly
+# over the compose network, not through these public site blocks, so blocking
+# the path here doesn't affect it — this only stops an external client from
+# reaching it through the reverse proxy.
+(block_internal) {
+	handle /internal/* {
+		respond 404
+	}
+}
+
 # Replace api.APEX_DOMAIN and kb.APEX_DOMAIN with the real hostnames.
 api.APEX_DOMAIN {
+	import block_internal
 	reverse_proxy api:3000
 }
 
 kb.APEX_DOMAIN {
+	import block_internal
 	reverse_proxy api:3000
 }
 
@@ -30,5 +45,6 @@ https:// {
 	tls {
 		on_demand
 	}
+	import block_internal
 	reverse_proxy api:3000
 }

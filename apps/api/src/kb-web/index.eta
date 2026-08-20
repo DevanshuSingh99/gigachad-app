@@ -1,0 +1,59 @@
+<%~ include('./layout', {
+  title: 'Help Center',
+  workspaceName: it.workspaceName,
+  kbRoot: it.kbRoot,
+  body: `
+  <div class="hero">
+    <h1>How can we help?</h1>
+    <form class="search-form" action="${it.kbRoot}" method="get">
+      <input class="search-input" name="search" placeholder="Search articles…"
+             value="${escapeHtml(it.search ?? '')}" autofocus />
+      <button class="btn" type="submit">Search</button>
+    </form>
+  </div>
+
+  <div class="container">
+    ${it.search
+      ? `<div class="section-header">
+           <h2>Results for "${escapeHtml(it.search)}"</h2>
+         </div>
+         ${it.articles.length === 0
+           ? '<p class="empty">No articles matched your search. Try different keywords.</p>'
+           : `<ul class="article-list">
+               ${it.articles.map(a => `
+                 <li class="article-item">
+                   <a href="${it.kbRoot}/articles/${a.slug}">${escapeHtml(a.title)}</a>
+                   ${a.categoryName ? `<p class="meta">${escapeHtml(a.categoryName)}</p>` : ''}
+                 </li>`).join('')}
+             </ul>`}`
+      : `<div class="layout">
+           <aside class="sidebar">
+             <h2>Categories</h2>
+             <ul>
+               <li><a href="${it.kbRoot}" class="${!it.activeCategorySlug ? 'active' : ''}">All articles</a></li>
+               ${it.categories.map(c => `
+                 <li>
+                   <a href="${it.kbRoot}?category=${c.slug}"
+                      class="${it.activeCategorySlug === c.slug ? 'active' : ''}">${escapeHtml(c.name)}</a>
+                 </li>`).join('')}
+             </ul>
+           </aside>
+           <main>
+             ${it.activeCategorySlug
+               ? `<div class="section-header">
+                    <h2>${escapeHtml(it.categories.find(c => c.slug === it.activeCategorySlug)?.name ?? '')}</h2>
+                  </div>`
+               : ''}
+             ${it.articles.length === 0
+               ? '<p class="empty">No published articles yet.</p>'
+               : `<ul class="article-list">
+                   ${it.articles.map(a => `
+                     <li class="article-item">
+                       <a href="${it.kbRoot}/articles/${a.slug}">${escapeHtml(a.title)}</a>
+                       ${a.categoryName ? `<p class="meta">${escapeHtml(a.categoryName)}</p>` : ''}
+                     </li>`).join('')}
+                 </ul>`}
+           </main>
+         </div>`}
+  </div>
+`}) %>

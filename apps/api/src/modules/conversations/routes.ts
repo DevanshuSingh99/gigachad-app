@@ -1,10 +1,12 @@
 import { Router } from 'express';
-import { conversationListQuery, createConversationInput, patchConversationInput, readInput, uuid } from '@gigachad/shared';
+import { conversationListQuery, createConversationInput, emailReplyInput, patchConversationInput, readInput, uuid } from '@gigachad/shared';
 import { z } from 'zod';
 
 import { authOf, membershipOf, requireMember } from '../../middleware/requireAuth';
 import { parseBody, parseParams, parseQuery } from '../../middleware/validate';
 import { messagesRouter } from '../messages/routes';
+import * as aiService from '../ai/service';
+import * as emailService from '../email/service';
 import * as service from './service';
 
 /** Workspace-scoped: mounted under /workspaces/:workspaceId/conversations. */
@@ -39,6 +41,29 @@ conversationsRouter.post('/:conversationId/read', requireMember, async (req, res
   const { conversationId } = parseParams(req, conversationParams);
   const input = parseBody(req, readInput);
   res.json({ data: await service.markConversationRead(membershipOf(req), conversationId, input) });
+});
+
+conversationsRouter.post('/:conversationId/email-reply', requireMember, async (req, res) => {
+  const { conversationId } = parseParams(req, conversationParams);
+  const input = parseBody(req, emailReplyInput);
+  res.status(201).json({
+    data: await emailService.createEmailReply(
+      membershipOf(req),
+      conversationId,
+      input,
+      authOf(req).userId,
+    ),
+  });
+});
+
+conversationsRouter.get('/:conversationId/summary', requireMember, async (req, res) => {
+  const { conversationId } = parseParams(req, conversationParams);
+  res.json({ data: await aiService.getSummary(membershipOf(req), conversationId) });
+});
+
+conversationsRouter.post('/:conversationId/summary', requireMember, async (req, res) => {
+  const { conversationId } = parseParams(req, conversationParams);
+  res.json({ data: await aiService.triggerSummary(membershipOf(req), conversationId) });
 });
 
 conversationsRouter.use('/:conversationId/messages', messagesRouter);
