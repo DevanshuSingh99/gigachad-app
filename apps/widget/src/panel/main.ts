@@ -263,7 +263,12 @@ async function sendDraft(draft: Draft): Promise<void> {
         createdAt: ack.data.createdAt,
       });
     } else {
-      throw new Error('offline');
+      const message = await widgetFetch<WidgetMessageDto>(
+        api,
+        `/api/v1/widget/conversations/${state.conversationId}/messages`,
+        { method: 'POST', body: { bodyText: draft.bodyText, clientMessageId: draft.clientMessageId } },
+      );
+      applyDelivered(draft, toDisplayMessage(message));
     }
   } catch (err) {
     draft.status = 'failed';

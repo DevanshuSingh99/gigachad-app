@@ -50,6 +50,16 @@ export function findActiveEmbedToken(token: string): Promise<ActiveEmbedToken | 
   );
 }
 
+/** True when this origin is bound to an active embed token for the workspace. */
+export function findActiveEmbedOrigin(workspaceId: string, origin: string) {
+  return unscoped('socket handshake: resolve embed origin for workspace', () =>
+    db.embedToken.findFirst({
+      where: { workspaceId, allowedOrigin: origin, isActive: true },
+      select: { id: true },
+    }),
+  );
+}
+
 export function listContactConversations(scope: WorkspaceScope, contactId: string) {
   return db.conversation.findMany({
     where: { workspaceId: scope.workspaceId, contactId },

@@ -6,6 +6,7 @@ import { logger } from '../lib/logger';
 import { hashToken } from '../lib/tokens';
 import { findWidgetSessionByToken, touchWidgetSession } from '../lib/widgetTokens';
 import { parseSettings } from '../modules/workspaces/dto';
+import { findActiveEmbedOrigin } from '../modules/widget/repo';
 import type { IoSocket, SocketPrincipal } from './types';
 
 /**
@@ -74,7 +75,11 @@ async function authenticateWidget(token: string, origin: string | undefined): Pr
     db.workspace.findUnique({ where: { id: session.workspaceId }, select: { settingsJson: true } }),
   );
   const settings = parseSettings(workspace?.settingsJson);
-  if (!origin || !settings.allowedWidgetOrigins.includes(origin)) {
+  const onWorkspaceAllowlist = Boolean(origin && settings.allowedWidgetOrigins.includes(origin));
+  const onEmbedAllowlist = origin
+    ? Boolean(await findActiveEmbedOrigin(session.workspaceId, origin))
+    : false;
+  if (!onWorkspaceAllowlist && !onEmbedAllowlist) {
     throw new Error('origin not allowed');
   }
 
