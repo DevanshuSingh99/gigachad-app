@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+
+/**
+ * HeroUI ships a Tailwind plugin that defines the semantic color scale the
+ * components use (background, foreground, default-*, primary, danger, …), so its
+ * config has to be loaded rather than replaced. @config loads the JS config file,
+ * which is what carries `plugins: [heroui()]` and the content globs that keep
+ * HeroUI's own class names from being purged.
+ */
+@config '../tailwind.config.ts';
+
+@layer base {
+  :root {
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+
+  html {
+    /* No horizontal page scroll at 320px: long subjects, email addresses, and
+       hostnames truncate rather than widening their container. */
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Visible focus rings are never removed (docs/15-frontend-and-widget.md). */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+}

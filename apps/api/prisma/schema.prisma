@@ -1,0 +1,569 @@
+// Gigachad schema. Single source of truth for the design: docs/04-database.md.
+//
+// Conventions that hold everywhere:
+//   * UUID primary keys, UTC timestamps, snake_case columns via @map.
+//   * Every tenant-owned row carries workspace_id, and repositories always put
+//     that predicate in the query (invariant 1, docs/18-execution.md).
+//   * Child rows reference their parent with a COMPOSITE (workspace_id, id)
+//     foreign key wherever the parent is tenant-owned. This is the reason each
+//     such parent also declares @@unique([workspaceId, id]): it makes attaching
+//     a row to a parent in another workspace a database error rather than
+//     something only application code prevents.
+//
+// Three things in this schema cannot be expressed by Prisma and are added by
+// hand in the migration SQL — see prisma/migrations/*/migration.sql:
+//   1. CREATE EXTENSION pg_trgm
+//   2. the partial unique indexes on contacts, and the NULLS NOT DISTINCT unique
+//      index on idempotency_keys
+//   3. knowledge_articles.search_vector as a GENERATED column, its GIN index,
+//      and the gin_trgm_ops index on title
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" covers local development; the musl targets cover the Alpine runtime
+  // image on both x64 and arm64, since the Oracle VM may be either.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum PlatformRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum WorkspaceRole {
+  ADMIN
+  AGENT
+}
+
+enum MemberStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum Channel {
+  CHAT
+  EMAIL
+}
+
+enum ConversationStatus {
+  OPEN
+  SNOOZED
+  RESOLVED
+}
+
+enum SenderType {
+  CUSTOMER
+  AGENT
+  SYSTEM
+}
+
+enum IdentitySource {
+  EMAIL
+  WIDGET
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum SummaryState {
+  QUEUED
+  READY
+  STALE
+  ERROR
+}
+
+enum DomainStatus {
+  PENDING
+  VERIFIED
+  ERROR
+}
+
+// ─── Identity ─────────────────────────────────────────────────────────────────
+
+/// Platform identity. `platformRole` is a global role separate from workspace
+/// membership; the seeded SUPER_ADMIN has no API surface in this build and exists
+/// so platform operations do not later require a migration.
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  passwordHash String       @map("password_hash")
+  name         String
+  platformRole PlatformRole @default(USER) @map("platform_role")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  sessions            Session[]
+  memberships         WorkspaceMember[]
+  invitationsSent     Invitation[]             @relation("InvitationInvitedBy")
+  authoredMessages    Message[]
+  assignedTo          Conversation[]           @relation("ConversationAssignee")
+  assignmentsReceived ConversationAssignment[] @relation("AssignmentAssignee")
+  assignmentsMade     ConversationAssignment[] @relation("AssignmentAssignedBy")
+  authoredArticles    KnowledgeArticle[]
+
+  @@index([platformRole])
+  @@map("users")
+}
+
+/// Server-side session. The cookie carries only an opaque token; the hash is
+/// what is stored, and expiry/revocation are always checked server-side.
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+// ─── Tenancy ──────────────────────────────────────────────────────────────────
+
+/// The tenant boundary. `widgetKey` identifies a workspace publicly but grants
+/// no dashboard access. `settingsJson` has the fixed validated shape in
+/// packages/shared/src/settings.ts — it is a settings column, not a dumping ground.
+model Workspace {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String   @unique
+  widgetKey      String   @unique @map("widget_key")
+  /// Derived as <slug>@inbound.<INBOUND_EMAIL_DOMAIN> and stored so it survives
+  /// a platform domain change.
+  supportAddress String   @map("support_address")
+  settingsJson   Json     @map("settings_json")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  members       WorkspaceMember[]
+  invitations   Invitation[]
+  contacts      Contact[]
+  conversations Conversation[]
+  messages      Message[]
+  assignments   ConversationAssignment[]
+  categories    KnowledgeCategory[]
+  articles      KnowledgeArticle[]
+  summaries     AiSummary[]
+  widgetSessions WidgetSession[]
+  emailThreads  EmailThread[]
+  emailMessages EmailMessage[]
+  customDomains CustomDomain[]
+  idempotencyKeys IdempotencyKey[]
+
+  @@map("workspaces")
+}
+
+/// Membership and role. Every privileged query joins this table.
+model WorkspaceMember {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole
+  status      MemberStatus  @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId, role])
+  @@map("workspace_members")
+}
+
+/// Single-use, expiring team invitation. The token is never stored in plaintext.
+model Invitation {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  email       String
+  role        WorkspaceRole
+  tokenHash   String        @unique @map("token_hash")
+  expiresAt   DateTime      @map("expires_at")
+  acceptedAt  DateTime?     @map("accepted_at")
+  invitedBy   String        @map("invited_by") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inviter   User      @relation("InvitationInvitedBy", fields: [invitedBy], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, email])
+  @@map("invitations")
+}
+
+// ─── Customers ────────────────────────────────────────────────────────────────
+
+/// Customer identity within one workspace. Uniqueness on email and externalKey is
+/// enforced by PARTIAL unique indexes added in the migration, so that many
+/// anonymous contacts (both columns null) can coexist.
+model Contact {
+  id             String         @id @default(uuid()) @db.Uuid
+  workspaceId    String         @map("workspace_id") @db.Uuid
+  email          String?
+  name           String?
+  /// Device/browser-scoped key for anonymous widget visitors.
+  externalKey    String?        @map("external_key")
+  identitySource IdentitySource @map("identity_source")
+  lastSeenAt     DateTime       @default(now()) @map("last_seen_at")
+  metadataJson   Json?          @map("metadata_json")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations  Conversation[]
+  widgetSessions WidgetSession[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, lastSeenAt])
+  @@map("contacts")
+}
+
+// ─── Inbox ────────────────────────────────────────────────────────────────────
+
+/// A unified thread. Read state lives here rather than per message: two integer
+/// columns answer the only question the UI asks — has the other side seen up to
+/// sequence N. `messageCount` doubles as the sequence allocator (see Message).
+model Conversation {
+  id                       String             @id @default(uuid()) @db.Uuid
+  workspaceId              String             @map("workspace_id") @db.Uuid
+  contactId                String             @map("contact_id") @db.Uuid
+  channel                  Channel
+  status                   ConversationStatus @default(OPEN)
+  assigneeId               String?            @map("assignee_id") @db.Uuid
+  snoozedUntil             DateTime?          @map("snoozed_until")
+  subject                  String?
+  lastMessageAt            DateTime           @default(now()) @map("last_message_at")
+  messageCount             Int                @default(0) @map("message_count")
+  agentLastReadSequence    Int                @default(0) @map("agent_last_read_sequence")
+  customerLastReadSequence Int                @default(0) @map("customer_last_read_sequence")
+  createdAt                DateTime           @default(now()) @map("created_at")
+  updatedAt                DateTime           @updatedAt @map("updated_at")
+
+  workspace   Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact     Contact                  @relation(fields: [workspaceId, contactId], references: [workspaceId, id], onDelete: Restrict)
+  assignee    User?                    @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  messages    Message[]
+  assignments ConversationAssignment[]
+  summary     AiSummary?
+  emailThread EmailThread?
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, lastMessageAt])
+  @@index([workspaceId, channel, status])
+  @@index([workspaceId, assigneeId, status])
+  @@index([workspaceId, contactId])
+  @@map("conversations")
+}
+
+/// Durable message.
+///
+/// `sequence` is allocated inside the write transaction by bumping
+/// conversations.message_count and using the returned value. The row lock on the
+/// parent serializes concurrent sends, which yields a gapless per-conversation
+/// sequence with no counter table. Every transaction touching both tables must
+/// lock conversations BEFORE messages so deadlocks cannot form.
+/// Clients render by `sequence`, never by arrival time.
+model Message {
+  id              String         @id @default(uuid()) @db.Uuid
+  workspaceId     String         @map("workspace_id") @db.Uuid
+  conversationId  String         @map("conversation_id") @db.Uuid
+  senderType      SenderType     @map("sender_type")
+  senderUserId    String?        @map("sender_user_id") @db.Uuid
+  bodyText        String         @map("body_text")
+  /// Sanitized on write. Never raw provider or client HTML.
+  bodyHtml        String?        @map("body_html")
+  /// Client-generated idempotency key. The unique index below is what makes a
+  /// retry after an ambiguous failure safe.
+  clientMessageId String?        @map("client_message_id")
+  sequence        Int
+  deliveryStatus  DeliveryStatus @default(SENT) @map("delivery_status")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation  @relation(fields: [workspaceId, conversationId], references: [workspaceId, id], onDelete: Cascade)
+  senderUser   User?         @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  emailMessage EmailMessage?
+
+  @@unique([conversationId, sequence])
+  @@unique([conversationId, clientMessageId])
+  @@index([workspaceId, conversationId, createdAt])
+  @@map("messages")
+}
+
+/// Assignment history. The current assignee is also denormalized onto
+/// conversations.assignee_id so inbox filtering stays a single-table index scan.
+model ConversationAssignment {
+  id             String    @id @default(uuid()) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  assigneeId     String?   @map("assignee_id") @db.Uuid
+  assignedBy     String    @map("assigned_by") @db.Uuid
+  assignedAt     DateTime  @default(now()) @map("assigned_at")
+  endedAt        DateTime? @map("ended_at")
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [workspaceId, conversationId], references: [workspaceId, id], onDelete: Cascade)
+  assignee     User?        @relation("AssignmentAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigner     User         @relation("AssignmentAssignedBy", fields: [assignedBy], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, conversationId, assignedAt])
+  @@index([workspaceId, assigneeId, endedAt])
+  @@map("conversation_assignments")
+}
+
+// ─── Knowledge base ───────────────────────────────────────────────────────────
+
+model KnowledgeCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  slug        String
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  articles  KnowledgeArticle[]
+
+  @@unique([workspaceId, slug])
+  @@unique([workspaceId, id])
+  @@index([workspaceId, sortOrder])
+  @@map("knowledge_categories")
+}
+
+/// Article lifecycle. There is no hard delete; unpublish is the removal path.
+///
+/// `bodyText` is a plain-text projection written on save and is what search
+/// indexes. Indexing bodyHtml would index markup, so a search for "strong" would
+/// match every bolded article.
+///
+/// `searchVector` is a GENERATED STORED tsvector maintained by PostgreSQL. Prisma
+/// cannot express generated columns, so it is declared Unsupported here and
+/// created by hand in the migration; the application never writes it.
+model KnowledgeArticle {
+  id           String        @id @default(uuid()) @db.Uuid
+  workspaceId  String        @map("workspace_id") @db.Uuid
+  categoryId   String?       @map("category_id") @db.Uuid
+  title        String
+  slug         String
+  /// Editor document model, kept so the editor can round-trip losslessly.
+  bodyJson     Json?         @map("body_json")
+  /// Sanitized against a strict allowlist on write.
+  bodyHtml     String        @map("body_html")
+  bodyText     String        @map("body_text")
+  status       ArticleStatus @default(DRAFT)
+  publishedAt  DateTime?     @map("published_at")
+  authorId     String?       @map("author_id") @db.Uuid
+  searchVector Unsupported("tsvector")? @map("search_vector")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category  KnowledgeCategory? @relation(fields: [workspaceId, categoryId], references: [workspaceId, id], onDelete: Restrict)
+  author    User?              @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId, status, categoryId])
+  @@map("knowledge_articles")
+}
+
+// ─── AI ───────────────────────────────────────────────────────────────────────
+
+/// The one displayed summary per conversation.
+///
+/// `sourceLastMessageId` is the staleness watermark: if the conversation's newest
+/// message differs from it, the summary renders as stale. That is why staleness
+/// needs no extra write when a message arrives.
+model AiSummary {
+  id                  String       @id @default(uuid()) @db.Uuid
+  workspaceId         String       @map("workspace_id") @db.Uuid
+  conversationId      String       @unique @map("conversation_id") @db.Uuid
+  summaryText         String?      @map("summary_text")
+  userWants           String?      @map("user_wants")
+  tried               String?
+  currentStatus       String?      @map("current_status")
+  sourceMessageCount  Int?         @map("source_message_count")
+  sourceLastMessageId String?      @map("source_last_message_id") @db.Uuid
+  state               SummaryState
+  /// An ErrorCode from packages/shared/src/errors.ts when state is ERROR.
+  errorCode           String?      @map("error_code")
+  model               String?
+  promptVersion       String?      @map("prompt_version")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [workspaceId, conversationId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, conversationId])
+  @@index([workspaceId, state])
+  @@map("ai_summaries")
+}
+
+// ─── Widget ───────────────────────────────────────────────────────────────────
+
+/// A customer browser's identity. The token is scoped to one workspace and one
+/// contact and is limited to customer operations; clearing browser storage
+/// creates a new session and therefore a new contact.
+model WidgetSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @map("workspace_id") @db.Uuid
+  contactId       String   @map("contact_id") @db.Uuid
+  publicTokenHash String   @unique @map("public_token_hash")
+  expiresAt       DateTime @map("expires_at")
+  lastSeenAt      DateTime @default(now()) @map("last_seen_at")
+  userAgent       String?  @map("user_agent")
+  origin          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [workspaceId, contactId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@index([workspaceId, lastSeenAt])
+  @@map("widget_sessions")
+}
+
+// ─── Email ────────────────────────────────────────────────────────────────────
+
+/// Email-channel metadata for one conversation. Scoping thread identifiers to a
+/// workspace here is what stops header matching from crossing tenants.
+model EmailThread {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @map("workspace_id") @db.Uuid
+  conversationId   String   @unique @map("conversation_id") @db.Uuid
+  providerThreadId String?  @map("provider_thread_id")
+  mailboxAddress   String   @map("mailbox_address")
+  /// RFC Message-ID of the most recent message in the thread, for In-Reply-To.
+  lastMessageId    String?  @map("last_message_id")
+  /// Bounded References chain: first message id plus the most recent 8.
+  referencesJson   Json?    @map("references_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [workspaceId, conversationId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, conversationId])
+  @@unique([workspaceId, providerThreadId])
+  @@index([workspaceId, lastMessageId])
+  @@map("email_threads")
+}
+
+/// Transport metadata for one message in either direction.
+///
+/// `providerEventId` is unique but nullable: outbound rows have none until the
+/// provider responds, and PostgreSQL treats NULLs as distinct, which is exactly
+/// the behavior wanted here.
+model EmailMessage {
+  id              String         @id @default(uuid()) @db.Uuid
+  workspaceId     String         @map("workspace_id") @db.Uuid
+  messageId       String         @map("message_id")
+  inReplyTo       String?        @map("in_reply_to")
+  referencesJson  Json?          @map("references_json")
+  fromAddress     String         @map("from_address")
+  toAddressesJson Json           @map("to_addresses_json")
+  providerEventId String?        @unique @map("provider_event_id")
+  direction       EmailDirection
+  deliveryStatus  DeliveryStatus @default(PENDING) @map("delivery_status")
+  /// Minimized: routing and threading headers only, never full bodies.
+  rawHeadersJson  Json?          @map("raw_headers_json")
+  receivedAt      DateTime?      @map("received_at")
+  sentAt          DateTime?      @map("sent_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  /// The inbox message this transport row belongs to.
+  gigachadMessageId String? @unique @map("gigachad_message_id") @db.Uuid
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  message   Message?  @relation(fields: [gigachadMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, messageId])
+  @@index([workspaceId, inReplyTo])
+  @@map("email_messages")
+}
+
+// ─── Custom domains ───────────────────────────────────────────────────────────
+
+/// A customer hostname serving that workspace's public KB.
+///
+/// There is deliberately no ssl_status column: certificate lifecycle is Caddy's,
+/// and duplicating it here would create a second source of truth that drifts.
+model CustomDomain {
+  id                String       @id @default(uuid()) @db.Uuid
+  workspaceId       String       @map("workspace_id") @db.Uuid
+  hostname          String       @unique
+  status            DomainStatus @default(PENDING)
+  /// Non-secret DNS proof. Must not encode internal IDs.
+  verificationToken String       @map("verification_token")
+  lastCheckedAt     DateTime?    @map("last_checked_at")
+  errorCode         String?      @map("error_code")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// Caddy's ask endpoint queries by hostname on every new TLS handshake, so this
+  /// index is on the hot path of certificate issuance.
+  @@index([status, hostname])
+  @@index([workspaceId])
+  @@map("custom_domains")
+}
+
+// ─── Replay protection ────────────────────────────────────────────────────────
+
+/// Idempotency and replay protection.
+///
+/// `workspaceId` is nullable because inbound provider webhooks are deduplicated
+/// by provider event ID BEFORE the workspace is resolved — a replayed webhook for
+/// an unroutable recipient still has to be recognized as a replay.
+///
+/// The uniqueness constraint is therefore NOT declared here: PostgreSQL treats
+/// NULLs as distinct by default, which would let two global rows share a key and
+/// silently defeat webhook dedup. The migration creates it as
+/// `UNIQUE NULLS NOT DISTINCT (workspace_id, actor_scope, key)` instead, which
+/// Prisma cannot express.
+model IdempotencyKey {
+  id           String   @id @default(uuid()) @db.Uuid
+  workspaceId  String?  @map("workspace_id") @db.Uuid
+  /// Who the key belongs to: "user", "widget", "provider".
+  actorScope   String   @map("actor_scope")
+  key          String
+  requestHash  String   @map("request_hash")
+  responseJson Json?    @map("response_json")
+  statusCode   Int?     @map("status_code")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}

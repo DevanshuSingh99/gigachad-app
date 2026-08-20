@@ -1,0 +1,50 @@
+# VM only, selected by COMPOSE_FILE in the VM's .env.
+# Adds Caddy, restart policies, and the memory limits from docs/10-deployment.md.
+# Sized for 1 vCPU / 6 GB with 2 GB of swap.
+
+services:
+  postgres:
+    restart: unless-stopped
+    command: postgres -c max_connections=25 -c shared_buffers=512MB
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+
+  redis:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  api:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  worker:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    environment:
+      API_HOST: ${API_URL}
+      KB_HOST: ${KB_HOST}
+    depends_on:
+      api:
+        condition: service_healthy

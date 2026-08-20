@@ -1,0 +1,85 @@
+# Shared by local development and the VM. The single deploy command is
+#   docker compose up -d --build
+# and COMPOSE_FILE in each machine's .env decides what it means: the VM selects
+# compose.prod.yaml, local machines pick up compose.override.yaml automatically.
+# See docs/10-deployment.md.
+
+name: gigachad
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: gigachad
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gigachad"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --maxmemory 200mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot. Runs to completion before anything that reads the schema starts, so
+  # migrations never need a second command and a failed migration stops the
+  # deploy instead of starting an API against a stale database.
+  migrate:
+    build:
+      context: .
+      target: runner
+    command: ["npx", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    env_file: .env
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: runner
+    command: ["node", "dist/server.js"]
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      target: runner
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    environment:
+      # A worker job may legitimately run longer than a request handler.
+      DATABASE_URL: ${DATABASE_URL}&connection_limit=4
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:
+  caddyconfig:

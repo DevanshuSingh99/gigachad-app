@@ -1,0 +1,39 @@
+# Local only. Docker Compose loads this automatically when COMPOSE_FILE is unset.
+#
+# Caddy is deliberately absent: there is nothing to terminate TLS for locally and
+# the API is reachable directly on port 3000.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  migrate:
+    build:
+      target: dev
+
+  api:
+    build:
+      target: dev
+    command: ["npm", "run", "dev"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/prisma:/app/apps/api/prisma
+      - ./apps/api/scripts:/app/apps/api/scripts
+      - ./packages/shared:/app/packages/shared
+
+  worker:
+    build:
+      target: dev
+    command: ["npm", "run", "dev:worker"]
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/prisma:/app/apps/api/prisma
+      - ./apps/api/scripts:/app/apps/api/scripts
+      - ./packages/shared:/app/packages/shared

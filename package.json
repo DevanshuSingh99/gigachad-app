@@ -1,0 +1,21 @@
+{
+  "name": "gigachad",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @gigachad/shared && npm run build --workspace @gigachad/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace @gigachad/api",
+    "dev:api": "npm run dev --workspace @gigachad/api",
+    "dev:dashboard": "npm run dev --workspace @gigachad/dashboard",
+    "build:dashboard": "npm run build --workspace @gigachad/shared && npm run build --workspace @gigachad/dashboard",
+    "build:demo": "npm run build --workspace @gigachad/demo"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "@gigachad/api",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "build": "prisma generate && tsc -p tsconfig.json && npm run copy:assets",
+    "copy:assets": "node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@gigachad/shared": "*",
+    "@node-rs/argon2": "^2.0.2",
+    "@prisma/client": "^6.19.3",
+    "bullmq": "^5.34.2",
+    "cookie-parser": "^1.4.7",
+    "eta": "^3.5.0",
+    "express": "^5.2.1",
+    "ioredis": "^5.4.2",
+    "pino": "^9.5.0",
+    "prisma": "^6.19.3",
+    "sanitize-html": "^2.13.1",
+    "socket.io": "^4.8.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/sanitize-html": "^2.13.0",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11"
+  }
+}
