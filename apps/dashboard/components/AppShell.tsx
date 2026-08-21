@@ -21,6 +21,9 @@ const NAV = [
   { href: '/members', label: 'Team' },
   { href: '/domains', label: 'Domains' },
   { href: '/embed', label: 'Embed' },
+  // Admin-only, and genuinely absent for an Agent (not just disabled) — unlike
+  // every other nav entry above, which every role can at least view.
+  { href: '/analytics', label: 'Analytics', adminOnly: true },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -94,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </p>
 
           <nav className="flex gap-1 md:flex-col">
-            {NAV.map((item) => (
+            {NAV.filter((item) => !('adminOnly' in item) || isAdmin).map((item) => (
               <Button
                 key={item.href}
                 as={Link}

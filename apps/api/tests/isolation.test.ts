@@ -498,4 +498,94 @@ describe('core correctness', () => {
     );
     expect(reopened.body.data.status).toBe('OPEN');
   });
+
+  it('16. firstResponseAt is set once on the first agent reply; resolvedAt tracks resolve/reopen', async () => {
+    // A fresh widget session/contact, not a.widgetToken: "new" resolves to the
+    // CONTACT's most recent chat conversation if one exists, and a.widgetToken's
+    // contact already has one from `provision()` (mutated by tests 14-15) —
+    // reusing it here would silently inherit its existing firstResponseAt.
+    const freshSession = await request(app)
+      .post('/api/v1/widget/session')
+      .set('Origin', WIDGET_ORIGIN)
+      .send({ widgetKey: a.widgetKey, name: 'Fresh Visitor' });
+    expect(freshSession.status).toBe(201);
+    const freshToken = freshSession.body.data.token as string;
+
+    const opened = await request(app)
+      .post('/api/v1/widget/conversations/new/messages')
+      .set('Origin', WIDGET_ORIGIN)
+      .set('x-widget-token', freshToken)
+      .send({ bodyText: 'fresh conversation', clientMessageId: `cm_${randomUUID()}` });
+    expect(opened.status).toBe(201);
+    const conversationId = opened.body.data.conversationId as string;
+
+    const before = await db.conversation.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: a.workspaceId, id: conversationId } } });
+    expect(before.firstResponseAt).toBeNull();
+    expect(before.resolvedAt).toBeNull();
+
+    const reply = await authed(a.agent, a.csrf)
+      .post(`/api/v1/workspaces/${a.workspaceId}/conversations/${conversationId}/messages`)
+      .send({ bodyText: 'agent reply', clientMessageId: `cm_${randomUUID()}` });
+    expect(reply.status).toBe(201);
+
+    const afterReply = await db.conversation.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: a.workspaceId, id: conversationId } } });
+    expect(afterReply.firstResponseAt).not.toBeNull();
+    const firstResponseAt = afterReply.firstResponseAt!.getTime();
+
+    // A second agent reply must not move firstResponseAt — it is lifetime, set once.
+    const secondReply = await authed(a.agent, a.csrf)
+      .post(`/api/v1/workspaces/${a.workspaceId}/conversations/${conversationId}/messages`)
+      .send({ bodyText: 'agent reply again', clientMessageId: `cm_${randomUUID()}` });
+    expect(secondReply.status).toBe(201);
+    const afterSecondReply = await db.conversation.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: a.workspaceId, id: conversationId } } });
+    expect(afterSecondReply.firstResponseAt!.getTime()).toBe(firstResponseAt);
+
+    const resolved = await authed(a.agent, a.csrf)
+      .patch(`/api/v1/workspaces/${a.workspaceId}/conversations/${conversationId}`)
+      .send({ status: 'RESOLVED' });
+    expect(resolved.status).toBe(200);
+    const afterResolve = await db.conversation.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: a.workspaceId, id: conversationId } } });
+    expect(afterResolve.resolvedAt).not.toBeNull();
+    expect(afterResolve.firstResponseAt!.getTime()).toBe(firstResponseAt);
+
+    // A customer message auto-reopens RESOLVED (test 15) — resolvedAt must
+    // clear so a still-open conversation never reports a resolution time.
+    const reopen = await request(app)
+      .post(`/api/v1/widget/conversations/${conversationId}/messages`)
+      .set('Origin', WIDGET_ORIGIN)
+      .set('x-widget-token', freshToken)
+      .send({ bodyText: 'customer reopens', clientMessageId: `cm_${randomUUID()}` });
+    expect(reopen.status).toBe(201);
+    const afterReopen = await db.conversation.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: a.workspaceId, id: conversationId } } });
+    expect(afterReopen.status).toBe('OPEN');
+    expect(afterReopen.resolvedAt).toBeNull();
+    expect(afterReopen.firstResponseAt!.getTime()).toBe(firstResponseAt);
+  });
+});
+
+describe('analytics', () => {
+  beforeEach(({ skip }) => {
+    if (!integrationReady) skip();
+  });
+
+  it("17. GET /analytics/overview is admin-only and returns a shaped payload for A's workspace", async () => {
+    const res = await authed(a.agent, a.csrf).get(
+      `/api/v1/workspaces/${a.workspaceId}/analytics/overview?range=30d`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.volume.total).toBeGreaterThan(0);
+    expect(Array.isArray(res.body.data.busiestHours)).toBe(true);
+    expect(res.body.data.busiestHours).toHaveLength(24);
+    expect(Array.isArray(res.body.data.agentPerformance)).toBe(true);
+
+    // Cross-tenant: B's admin must never see A's data, and an unauthenticated
+    // caller gets rejected before any query runs.
+    const cross = await authed(b.agent, b.csrf).get(
+      `/api/v1/workspaces/${a.workspaceId}/analytics/overview`,
+    );
+    expect(cross.status).toBe(404);
+
+    const anon = await request(app).get(`/api/v1/workspaces/${a.workspaceId}/analytics/overview`);
+    expect(anon.status).toBe(401);
+  });
 });

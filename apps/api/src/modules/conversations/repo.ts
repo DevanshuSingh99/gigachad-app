@@ -184,7 +184,7 @@ export async function allocateSequenceAndMaybeReopen(
           ELSE snoozed_until
         END,
         -- Lifetime "time to first response": set once, on the first-ever AGENT
-        -- message, never cleared by a later reopen (docs/09-analytics.md).
+        -- message, never cleared by a later reopen (documentation/15-analytics.md).
         first_response_at = CASE
           WHEN ${senderType} = 'AGENT' AND first_response_at IS NULL
           THEN now()

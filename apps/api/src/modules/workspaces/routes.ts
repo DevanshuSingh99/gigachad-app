@@ -3,6 +3,7 @@ import { createWorkspaceInput, patchWorkspaceInput, uuid } from '@gigachad/share
 
 import { authOf, membershipOf, requireAdmin, requireAuth, requireMember } from '../../middleware/requireAuth';
 import { parseBody, parseParams } from '../../middleware/validate';
+import { analyticsRouter } from '../analytics/routes';
 import { membershipDto } from '../auth/dto';
 import * as authRepo from '../auth/repo';
 import { cannedResponsesRouter } from '../canned-responses/routes';
@@ -57,3 +58,4 @@ workspacesRouter.use('/:workspaceId/kb', kbRouter);
 workspacesRouter.use('/:workspaceId/domains', domainsRouter);
 workspacesRouter.use('/:workspaceId/embed-tokens', embedTokensRouter);
 workspacesRouter.use('/:workspaceId/canned-responses', cannedResponsesRouter);
+workspacesRouter.use('/:workspaceId/analytics', analyticsRouter);

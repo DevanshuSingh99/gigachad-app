@@ -132,7 +132,7 @@ export async function patchConversation(
       data.snoozedUntil = input.status === 'SNOOZED' ? new Date(input.snoozedUntil!) : null;
       // Mirrors allocateSequenceAndMaybeReopen's reset on a customer-driven
       // reopen: an explicit agent PATCH is the other path that changes status,
-      // so it needs the same resolvedAt bookkeeping for analytics (docs/09-analytics.md).
+      // so it needs the same resolvedAt bookkeeping for analytics (documentation/15-analytics.md).
       data.resolvedAt = input.status === 'RESOLVED' ? new Date() : null;
     }
     if (input.assigneeId !== undefined) {
