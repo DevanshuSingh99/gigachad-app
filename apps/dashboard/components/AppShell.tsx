@@ -17,6 +17,7 @@ import { useActiveWorkspace, useLogout, useMe } from '@/lib/session';
 const NAV = [
   { href: '/inbox', label: 'Inbox' },
   { href: '/kb', label: 'Knowledge Base' },
+  { href: '/canned-responses', label: 'Canned Replies' },
   { href: '/members', label: 'Team' },
   { href: '/domains', label: 'Domains' },
   { href: '/embed', label: 'Embed' },

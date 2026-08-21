@@ -112,6 +112,7 @@ export function updateConversationFields(
     status?: ConversationStatus;
     assigneeId?: string | null;
     snoozedUntil?: Date | null;
+    resolvedAt?: Date | null;
   },
 ) {
   return client.conversation.update({
@@ -181,6 +182,21 @@ export async function allocateSequenceAndMaybeReopen(
           WHEN ${senderType} = 'CUSTOMER' AND status IN ('SNOOZED', 'RESOLVED')
           THEN NULL
           ELSE snoozed_until
+        END,
+        -- Lifetime "time to first response": set once, on the first-ever AGENT
+        -- message, never cleared by a later reopen (docs/09-analytics.md).
+        first_response_at = CASE
+          WHEN ${senderType} = 'AGENT' AND first_response_at IS NULL
+          THEN now()
+          ELSE first_response_at
+        END,
+        -- Mirrors the status/snoozed_until reset above: a customer message
+        -- reopening a SNOOZED/RESOLVED conversation must not leave a stale
+        -- resolved_at behind for a conversation that is, again, unresolved.
+        resolved_at = CASE
+          WHEN ${senderType} = 'CUSTOMER' AND status IN ('SNOOZED', 'RESOLVED')
+          THEN NULL
+          ELSE resolved_at
         END
     WHERE id = ${conversationId}::uuid AND workspace_id = ${scope.workspaceId}::uuid
     RETURNING message_count AS "sequence", status, assignee_id AS "assigneeId", last_message_at AS "lastMessageAt"

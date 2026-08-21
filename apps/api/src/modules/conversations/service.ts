@@ -121,10 +121,19 @@ export async function patchConversation(
       }
     }
 
-    const data: { status?: typeof current.status; assigneeId?: string | null; snoozedUntil?: Date | null } = {};
+    const data: {
+      status?: typeof current.status;
+      assigneeId?: string | null;
+      snoozedUntil?: Date | null;
+      resolvedAt?: Date | null;
+    } = {};
     if (input.status !== undefined) {
       data.status = input.status;
       data.snoozedUntil = input.status === 'SNOOZED' ? new Date(input.snoozedUntil!) : null;
+      // Mirrors allocateSequenceAndMaybeReopen's reset on a customer-driven
+      // reopen: an explicit agent PATCH is the other path that changes status,
+      // so it needs the same resolvedAt bookkeeping for analytics (docs/09-analytics.md).
+      data.resolvedAt = input.status === 'RESOLVED' ? new Date() : null;
     }
     if (input.assigneeId !== undefined) {
       data.assigneeId = input.assigneeId;

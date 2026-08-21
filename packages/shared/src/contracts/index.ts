@@ -1,5 +1,7 @@
 export * from './ai';
+export * from './analytics';
 export * from './auth';
+export * from './canned-responses';
 export * from './domains';
 export * from './email';
 export * from './embed-tokens';

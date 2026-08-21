@@ -122,6 +122,7 @@ model User {
   assignmentsReceived ConversationAssignment[] @relation("AssignmentAssignee")
   assignmentsMade     ConversationAssignment[] @relation("AssignmentAssignedBy")
   authoredArticles    KnowledgeArticle[]
+  cannedResponses     CannedResponse[]   @relation("CannedResponseCreator")
 
   @@index([platformRole])
   @@map("users")
@@ -175,7 +176,8 @@ model Workspace {
   emailMessages EmailMessage[]
   customDomains CustomDomain[]
   idempotencyKeys IdempotencyKey[]
-  embedTokens   EmbedToken[]
+  embedTokens     EmbedToken[]
+  cannedResponses CannedResponse[]
 
   @@map("workspaces")
 }
@@ -260,6 +262,14 @@ model Conversation {
   snoozedUntil             DateTime?          @map("snoozed_until")
   subject                  String?
   lastMessageAt            DateTime           @default(now()) @map("last_message_at")
+  /// Set once, the first time an AGENT message is sent on this conversation.
+  /// Never cleared — a lifetime "time to first response", not per-reopen.
+  firstResponseAt          DateTime?          @map("first_response_at")
+  /// Set when status becomes RESOLVED, cleared back to null whenever the
+  /// conversation leaves RESOLVED (explicit reopen or an incoming customer
+  /// message auto-reopening it) — see allocateSequenceAndMaybeReopen and
+  /// conversations/service.ts patchConversation, the only two writers.
+  resolvedAt               DateTime?          @map("resolved_at")
   messageCount             Int                @default(0) @map("message_count")
   agentLastReadSequence    Int                @default(0) @map("agent_last_read_sequence")
   customerLastReadSequence Int                @default(0) @map("customer_last_read_sequence")
@@ -279,6 +289,8 @@ model Conversation {
   @@index([workspaceId, channel, status])
   @@index([workspaceId, assigneeId, status])
   @@index([workspaceId, contactId])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, resolvedAt])
   @@map("conversations")
 }
 
@@ -591,4 +603,29 @@ model IdempotencyKey {
 
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+// ─── Canned Responses ─────────────────────────────────────────────────────────
+
+/// Workspace-scoped saved reply templates (S2 stretch feature).
+///
+/// `shortcut` is optional. When set, agents type `/shortcut` in the composer
+/// to trigger the response. Unique per workspace when present; multiple rows
+/// may omit it (partial unique index in the migration handles this).
+model CannedResponse {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  content     String
+  shortcut    String?
+  tags        Json     @default("[]")
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User?     @relation("CannedResponseCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@map("canned_responses")
 }

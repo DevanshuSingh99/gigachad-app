@@ -21,6 +21,10 @@ export const CAPS = {
   /** Cursor page size. */
   pageSizeDefault: 25,
   pageSizeMax: 100,
+  /** Canned response fields. */
+  cannedResponseNameChars: 100,
+  cannedResponseContentChars: 8_000,
+  cannedResponseShortcutChars: 50,
 } as const;
 
 export const TIMEOUTS = {
@@ -89,6 +93,10 @@ export const RATE_LIMITS = {
   aiSummaryPerConversation: { limit: 5, windowSeconds: 5 * 60, key: 'conversation' },
   aiSummaryPerWorkspaceDay: { limit: 200, windowSeconds: 24 * 60 * 60, key: 'workspace' },
   domainVerify: { limit: 10, windowSeconds: 60 * 60, key: 'workspace' },
+  // Not a security control — requireAdmin is. This just bounds how often the
+  // heavy multi-query aggregate behind /analytics/overview can be re-run
+  // (e.g. a range-toggle double-click) on the single-vCPU box.
+  analyticsRead: { limit: 30, windowSeconds: 60, key: 'workspace' },
   // Keyed by caller IP (Caddy's container IP in production), not by the
   // attacker-controlled `domain` query param — see tlsAsk.ts. Paired with a
   // generous global backstop, same shape as loginPerIp/loginPerEmail below.

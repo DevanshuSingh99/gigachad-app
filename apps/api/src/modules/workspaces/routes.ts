@@ -5,6 +5,7 @@ import { authOf, membershipOf, requireAdmin, requireAuth, requireMember } from '
 import { parseBody, parseParams } from '../../middleware/validate';
 import { membershipDto } from '../auth/dto';
 import * as authRepo from '../auth/repo';
+import { cannedResponsesRouter } from '../canned-responses/routes';
 import { contactsRouter } from '../contacts/routes';
 import { conversationsRouter } from '../conversations/routes';
 import { domainsRouter } from '../domains/routes';
@@ -55,3 +56,4 @@ workspacesRouter.use('/:workspaceId/conversations', conversationsRouter);
 workspacesRouter.use('/:workspaceId/kb', kbRouter);
 workspacesRouter.use('/:workspaceId/domains', domainsRouter);
 workspacesRouter.use('/:workspaceId/embed-tokens', embedTokensRouter);
+workspacesRouter.use('/:workspaceId/canned-responses', cannedResponsesRouter);
