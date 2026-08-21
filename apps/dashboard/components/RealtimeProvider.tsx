@@ -3,6 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
+import { invalidateSummary } from '@/lib/ai';
 import { conversationKey, messagesKey } from '@/lib/inbox';
 import { getSocket } from '@/lib/socket';
 
@@ -43,17 +44,29 @@ export function RealtimeProvider({ workspaceId }: { workspaceId: string }) {
     const onMessageRead = (payload: { conversationId: string }) => {
       void queryClient.invalidateQueries({ queryKey: conversationKey(workspaceId, payload.conversationId) });
     };
+    const onSummaryUpdated = (payload: { conversationId: string }) => {
+      invalidateSummary(queryClient, workspaceId, payload.conversationId);
+    };
+    const onConnect = () => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] });
+    };
 
     socket.on('message:new', onMessageNew);
     socket.on('message:updated', onMessageUpdated);
     socket.on('conversation:updated', onConversationUpdated);
     socket.on('message:read', onMessageRead);
+    socket.on('summary:updated', onSummaryUpdated);
+    socket.on('conversation:sync', onMessageNew);
+    socket.on('connect', onConnect);
 
     return () => {
       socket.off('message:new', onMessageNew);
       socket.off('message:updated', onMessageUpdated);
       socket.off('conversation:updated', onConversationUpdated);
       socket.off('message:read', onMessageRead);
+      socket.off('summary:updated', onSummaryUpdated);
+      socket.off('conversation:sync', onMessageNew);
+      socket.off('connect', onConnect);
     };
   }, [workspaceId, queryClient]);
 

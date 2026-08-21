@@ -61,6 +61,12 @@ export const AI = {
   cooldownSeconds: 60,
   errorCooldownSeconds: 120,
   dailyPerWorkspace: 200,
+  /**
+   * A QUEUED row older than this is treated as abandoned (worker skip, crash,
+   * or exhausted retries that never wrote ERROR). Sized above 3 BullMQ attempts
+   * of a 30s LLM call with one schema retry, plus exponential backoff.
+   */
+  queuedStaleSeconds: 240,
 } as const;
 
 /**
@@ -77,7 +83,7 @@ export const RATE_LIMITS = {
   widgetSessionCreate: { limit: 20, windowSeconds: 60 * 60, key: 'ip+widgetKey' },
   widgetMessageSend: { limit: 20, windowSeconds: 60, key: 'widgetSession' },
   socketMessageSend: { limit: 30, windowSeconds: 60, key: 'socket' },
-  socketTyping: { limit: 10, windowSeconds: 10, key: 'socket' },
+  socketTyping: { limit: 40, windowSeconds: 10, key: 'socket' },
   kbSuggestions: { limit: 60, windowSeconds: 60, key: 'widgetSession' },
   publicKbSearch: { limit: 60, windowSeconds: 60, key: 'ip' },
   aiSummaryPerConversation: { limit: 5, windowSeconds: 5 * 60, key: 'conversation' },

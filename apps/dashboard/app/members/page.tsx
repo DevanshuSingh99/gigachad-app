@@ -83,6 +83,13 @@ function MembersScreen() {
             ? 'Invite teammates and manage their roles.'
             : 'Everyone with access to this workspace.'}
         </p>
+        {workspace?.supportAddress ? (
+          <p className="text-default-500 mt-2 text-sm">
+            Support inbox:{' '}
+            <span className="text-foreground font-medium">{workspace.supportAddress}</span>
+            . Mail to this address becomes an email conversation, threaded on reply.
+          </p>
+        ) : null}
       </header>
 
       {/* Admin-only, and genuinely absent for an Agent rather than merely disabled. */}

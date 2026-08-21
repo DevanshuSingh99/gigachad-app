@@ -5,9 +5,10 @@ import {
   type MessageNewPayload,
 } from '@gigachad/shared';
 
+import { AppError } from '../../lib/errors';
+import { logger } from '../../lib/logger';
 import * as messagesRepo from '../../modules/messages/repo';
-import { joinConversationRoom } from '../rooms';
-import type { IoSocket } from '../types';
+import type { EnsureSubscribed, IoSocket } from '../types';
 
 function toSyncMessage(row: {
   id: string;
@@ -40,11 +41,10 @@ function toSyncMessage(row: {
  * arbitrarily long absence in one payload.
  */
 export interface ConversationHandlerOptions {
-  /** Invoked after a successful join, so the caller can register presence and track membership for the heartbeat/disconnect cleanup in handlers/connection.ts. */
-  onSubscribed?: (conversationId: string) => void | Promise<void>;
+  ensureSubscribed: EnsureSubscribed;
 }
 
-export function registerConversationHandlers(socket: IoSocket, options: ConversationHandlerOptions = {}): void {
+export function registerConversationHandlers(socket: IoSocket, options: ConversationHandlerOptions): void {
   socket.on('conversation:subscribe', async (raw, ack) => {
     const parsed = conversationSubscribeInput.safeParse(raw);
     if (!parsed.success) {
@@ -53,32 +53,43 @@ export function registerConversationHandlers(socket: IoSocket, options: Conversa
     }
     const { conversationId, lastSequence } = parsed.data;
 
-    const joined = await joinConversationRoom(socket, conversationId);
-    if (!joined) {
-      ack?.({ ok: false, code: 'NOT_FOUND', message: 'Conversation not found.' });
-      return;
+    // Wrapped so a transient Redis/DB error (e.g. inside ensureSubscribed's
+    // presence bookkeeping) always reaches the client's ack callback instead of
+    // rejecting unhandled — an ack that never fires leaves the widget/dashboard
+    // hanging on this subscribe forever with no visible error.
+    try {
+      const joined = await options.ensureSubscribed(conversationId);
+      if (!joined) {
+        ack?.({ ok: false, code: 'NOT_FOUND', message: 'Conversation not found.' });
+        return;
+      }
+
+      const scope = { workspaceId: socket.data.principal.workspaceId };
+      const rows = await messagesRepo.listMessages(scope, conversationId, {
+        take: REALTIME.syncMessageCap + 1,
+        afterSequence: lastSequence,
+      });
+
+      const truncated = rows.length > REALTIME.syncMessageCap;
+      const page = truncated ? rows.slice(0, REALTIME.syncMessageCap) : rows;
+      const newLastSequence = page.length > 0 ? page[page.length - 1]!.sequence : lastSequence;
+
+      const payload: ConversationSyncPayload = {
+        conversationId,
+        afterSequence: lastSequence,
+        messages: page.map(toSyncMessage),
+        lastSequence: newLastSequence,
+        truncated,
+      };
+
+      ack?.({ ok: true, data: { conversationId, lastSequence: newLastSequence } });
+      socket.emit('conversation:subscribed', { conversationId, lastSequence: newLastSequence });
+      socket.emit('conversation:sync', payload);
+    } catch (err) {
+      logger.error({ err, conversationId }, 'conversation:subscribe failed');
+      const code = err instanceof AppError ? err.code : 'INTERNAL';
+      const message = err instanceof AppError ? err.message : 'Could not subscribe to this conversation.';
+      ack?.({ ok: false, code, message });
     }
-
-    const scope = { workspaceId: socket.data.principal.workspaceId };
-    const rows = await messagesRepo.listMessages(scope, conversationId, {
-      take: REALTIME.syncMessageCap + 1,
-      afterSequence: lastSequence,
-    });
-
-    const truncated = rows.length > REALTIME.syncMessageCap;
-    const page = truncated ? rows.slice(0, REALTIME.syncMessageCap) : rows;
-    const newLastSequence = page.length > 0 ? page[page.length - 1]!.sequence : lastSequence;
-
-    const payload: ConversationSyncPayload = {
-      conversationId,
-      afterSequence: lastSequence,
-      messages: page.map(toSyncMessage),
-      lastSequence: newLastSequence,
-      truncated,
-    };
-
-    ack?.({ ok: true, data: { conversationId, lastSequence: newLastSequence } });
-    socket.emit('conversation:sync', payload);
-    await options.onSubscribed?.(conversationId);
   });
 }

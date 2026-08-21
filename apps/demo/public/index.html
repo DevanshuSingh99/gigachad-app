@@ -47,13 +47,23 @@
     <main>
       <h1>This is not the dashboard.</h1>
       <p class="lede">
-        It's an ordinary customer website — a different origin from
-        <code>app.&lt;domain&gt;</code> on purpose. The submission requires a page
-        exactly like this: somewhere the live-chat widget is genuinely installed and
-        testable, not just described.
+        It's an ordinary customer website — a different origin from the dashboard
+        on purpose. Sign up at the dashboard, mint an embed token whose allowed
+        origin is this page, then open
+        <code>?key=wk_embed_…</code> so messages land in <em>your</em> inbox.
       </p>
 
-    <script src="https://gigachad-app.devjs.in/widget/widget.js" data-widget-key="wk_embed_b772ca50cf58e68efbb809af536fcf1f" async ></script>
+    <script>
+      (function () {
+        var DEFAULT_KEY = 'wk_embed_b772ca50cf58e68efbb809af536fcf1f';
+        var key = new URLSearchParams(location.search).get('key') || DEFAULT_KEY;
+        var s = document.createElement('script');
+        s.src = 'https://gigachad-app.devjs.in/widget/widget.js';
+        s.async = true;
+        s.setAttribute('data-widget-key', key);
+        document.body.appendChild(s);
+      })();
+    </script>
 
   </body>
 </html>

@@ -1,8 +1,9 @@
 # Shared by local development and the VM. The single deploy command is
 #   docker compose up -d --build
 # and COMPOSE_FILE in each machine's .env decides what it means: the VM selects
-# compose.prod.yaml, local machines pick up compose.override.yaml automatically.
-# See docs/10-deployment.md.
+# compose.prod.yaml plus compose.caddy.yaml; local machines pick up
+# compose.override.yaml automatically.
+# See documentation/12-deploy.md.
 
 name: gigachad
 

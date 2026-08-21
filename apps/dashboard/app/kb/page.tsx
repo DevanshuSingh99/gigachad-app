@@ -5,8 +5,6 @@ import {
   Chip,
   Input,
   ScrollShadow,
-  Select,
-  SelectItem,
   Skeleton,
   Spinner,
   Table,
@@ -21,6 +19,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { AppShell } from '@/components/AppShell';
+import { NativeSelect } from '@/components/NativeSelect';
 import { useArticles, useCategories } from '@/lib/kb';
 import { useActiveWorkspace } from '@/lib/session';
 
@@ -69,30 +68,31 @@ function KbScreen() {
           isClearable
           onClear={() => setSearch('')}
         />
-        <Select
-          size="sm"
+        <NativeSelect
+          aria-label="Status"
           className="w-36"
-          selectedKeys={[statusFilter || '__all__']}
-          onChange={(e) => setStatusFilter(e.target.value === '__all__' ? '' : e.target.value as 'PUBLISHED' | 'DRAFT')}
+          value={statusFilter || '__all__'}
+          onChange={(e) =>
+            setStatusFilter(e.target.value === '__all__' ? '' : (e.target.value as 'PUBLISHED' | 'DRAFT'))
+          }
         >
-          <SelectItem key="__all__">All statuses</SelectItem>
-          <SelectItem key="PUBLISHED">Published</SelectItem>
-          <SelectItem key="DRAFT">Draft</SelectItem>
-        </Select>
-        <Select
-          size="sm"
-          placeholder="All categories"
+          <option value="__all__">All statuses</option>
+          <option value="PUBLISHED">Published</option>
+          <option value="DRAFT">Draft</option>
+        </NativeSelect>
+        <NativeSelect
+          aria-label="Category"
           className="w-44"
-          selectedKeys={[categoryFilter]}
+          value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value || '__all__')}
         >
-          {[
-            { id: '__all__', name: 'All categories' },
-            ...(categories.data ?? []),
-          ].map((c) => (
-            <SelectItem key={c.id}>{c.name}</SelectItem>
+          <option value="__all__">All categories</option>
+          {(categories.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
           ))}
-        </Select>
+        </NativeSelect>
       </div>
 
       <ScrollShadow className="min-h-0 flex-1 overflow-auto">

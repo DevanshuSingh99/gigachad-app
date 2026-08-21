@@ -19,8 +19,11 @@ export function useSummary(
         `/api/v1/workspaces/${workspaceId}/conversations/${conversationId}/summary`,
       ),
     enabled: Boolean(workspaceId && conversationId),
-    // Summary state changes via socket; no need to poll aggressively.
+    // Summary state changes via socket; poll only while a job is in flight so
+    // a missed `summary:updated` (worker emit used to no-op) cannot leave the
+    // panel on "Generating summary…" forever.
     staleTime: 30_000,
+    refetchInterval: (query) => (query.state.data?.state === 'queued' ? 2_000 : false),
   });
 }
 

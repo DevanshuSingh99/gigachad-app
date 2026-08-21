@@ -188,6 +188,15 @@ function EmbedScreen() {
             <code className="text-foreground">Origin</code> header of the request
             matches exactly — any other site will be rejected.
           </p>
+          <p className="text-default-500 text-sm">
+            To test against the hosted demo page, set the origin to{' '}
+            <code className="text-foreground">https://gigachad-demo.devjs.in</code>
+            , then open{' '}
+            <code className="text-foreground">
+              https://gigachad-demo.devjs.in/?key=&lt;your-token&gt;
+            </code>
+            .
+          </p>
 
           {tokens.isPending ? (
             <div className="space-y-3">

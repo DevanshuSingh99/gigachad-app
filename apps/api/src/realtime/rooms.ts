@@ -13,9 +13,9 @@ import type { IoSocket } from './types';
  */
 
 /** Agents join their workspace room immediately on connect (docs/06-realtime.md step 3). */
-export function joinWorkspaceRoom(socket: IoSocket): void {
+export async function joinWorkspaceRoom(socket: IoSocket): Promise<void> {
   if (socket.data.principal.actorType !== 'AGENT') return;
-  socket.join(workspaceRoom(socket.data.principal.workspaceId));
+  await socket.join(workspaceRoom(socket.data.principal.workspaceId));
 }
 
 /**
@@ -43,6 +43,8 @@ export async function joinConversationRoom(
 
   if (!conversation) return null;
 
-  socket.join(conversationRoom(principal.workspaceId, conversationId));
+  // Redis adapter: join is async. Callers that check `socket.rooms` or emit
+  // into the room must await this, or typing/presence events are silently dropped.
+  await socket.join(conversationRoom(principal.workspaceId, conversationId));
   return { id: conversation.id };
 }

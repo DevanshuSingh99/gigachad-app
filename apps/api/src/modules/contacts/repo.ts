@@ -83,12 +83,32 @@ export async function findOrCreateContact(
   scope: WorkspaceScope,
   data: { email?: string; name?: string; externalKey?: string; identitySource: 'EMAIL' | 'WIDGET' },
 ) {
+  // Raw SQL, not Prisma's typed upsert: `contacts_workspace_email_key` is a
+  // partial unique index (`WHERE email IS NOT NULL`, prisma/migrations/...),
+  // which Prisma has no syntax for and so cannot see as a `@@unique` target.
+  // This is a real atomic `INSERT ... ON CONFLICT DO UPDATE` against that
+  // index — two concurrent widget sessions (or a widget session racing an
+  // inbound email) for the same brand-new address resolve to one Contact row
+  // instead of racing a find-then-create into a duplicate.
   if (data.email) {
-    const existing = await client.contact.findFirst({
-      where: { workspaceId: scope.workspaceId, email: data.email },
-      select: CONTACT_SELECT,
-    });
-    if (existing) return existing;
+    const rows = await client.$queryRaw<
+      Array<{
+        id: string;
+        name: string | null;
+        email: string | null;
+        externalKey: string | null;
+        identitySource: 'EMAIL' | 'WIDGET';
+        lastSeenAt: Date;
+        createdAt: Date;
+      }>
+    >`
+      INSERT INTO contacts (id, workspace_id, email, name, external_key, identity_source, created_at, updated_at, last_seen_at)
+      VALUES (gen_random_uuid(), ${scope.workspaceId}::uuid, ${data.email}, ${data.name ?? null}, ${data.externalKey ?? null}, ${data.identitySource}::"IdentitySource", now(), now(), now())
+      ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL
+        DO UPDATE SET email = EXCLUDED.email
+      RETURNING id, name, email, external_key AS "externalKey", identity_source AS "identitySource", last_seen_at AS "lastSeenAt", created_at AS "createdAt"
+    `;
+    return rows[0]!;
   }
 
   return client.contact.create({

@@ -60,7 +60,7 @@ function isPlatformOwnedNamespace(lower: string): boolean {
  * Throws `DOMAIN_INVALID` for any forbidden value so the error is clear
  * without leaking information about internal topology.
  */
-function assertSafeHostname(h: string): void {
+export function assertSafeHostname(h: string): void {
   const lower = h.toLowerCase();
 
   if (lower === 'localhost' || lower.endsWith('.localhost')) {

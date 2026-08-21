@@ -23,7 +23,7 @@ export function userDto(row: UserRow): UserDto {
 export interface MembershipRow {
   role: WorkspaceRole;
   workspaceId: string;
-  workspace: { name: string; slug: string };
+  workspace: { name: string; slug: string; supportAddress: string };
 }
 
 export function membershipDto(row: MembershipRow): MembershipDto {
@@ -31,6 +31,7 @@ export function membershipDto(row: MembershipRow): MembershipDto {
     workspaceId: row.workspaceId,
     workspaceName: row.workspace.name,
     workspaceSlug: row.workspace.slug,
+    supportAddress: row.workspace.supportAddress,
     role: row.role,
   };
 }

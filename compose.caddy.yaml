@@ -1,8 +1,7 @@
-# Assignment-only overlay. Do not use while system nginx is bound to 80/443.
-# After pause-host-for-caddy.sh:
+# Production TLS overlay. Caddy binds 80/443 and issues on-demand certificates
+# for verified custom knowledge-base hostnames (see Caddyfile).
 #   COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.caddy.yaml
 #   docker compose up -d --build
-# Before restore-host-from-caddy.sh, stop Caddy first (the restore script does that).
 
 services:
   caddy:

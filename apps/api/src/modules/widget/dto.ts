@@ -6,6 +6,7 @@ export interface WidgetConversationRow {
   subject: string | null;
   lastMessageAt: Date;
   customerLastReadSequence: number;
+  agentLastReadSequence: number;
 }
 
 /**
@@ -20,6 +21,7 @@ export function widgetConversationDto(row: WidgetConversationRow): WidgetConvers
     subject: row.subject,
     lastMessageAt: row.lastMessageAt.toISOString(),
     customerLastReadSequence: row.customerLastReadSequence,
+    agentLastReadSequence: row.agentLastReadSequence,
   };
 }
 

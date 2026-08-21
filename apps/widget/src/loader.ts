@@ -22,7 +22,6 @@ import {
  */
 
 declare const WIDGET_API_URL: string;
-declare const WIDGET_WS_URL: string;
 
 const LAUNCHER_ID = 'gc-widget-launcher';
 const BADGE_ID = 'gc-widget-badge';
@@ -256,8 +255,6 @@ function init(): void {
             widgetKey,
             hostPageUrl: location.href,
             locale: navigator.language,
-            apiUrl: WIDGET_API_URL,
-            wsUrl: WIDGET_WS_URL,
             ...result,
           });
           if (isOpen) postToPanel({ ns: WIDGET_NAMESPACE, type: 'open' });

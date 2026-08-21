@@ -28,14 +28,22 @@
 	}
 }
 
+# flush_interval -1: Socket.IO frames must not be buffered behind the proxy or
+# typing / presence / read receipts arrive in bursts after a quiet period.
+(api_proxy) {
+	reverse_proxy api:3000 {
+		flush_interval -1
+	}
+}
+
 gigachad-api.devjs.in {
 	import block_internal
-	reverse_proxy api:3000
+	import api_proxy
 }
 
 gigachad-kb.devjs.in {
 	import block_internal
-	reverse_proxy api:3000
+	import api_proxy
 }
 
 # Verified customer domains. The certificate is issued at the first handshake,
@@ -45,5 +53,5 @@ https:// {
 		on_demand
 	}
 	import block_internal
-	reverse_proxy api:3000
+	import api_proxy
 }

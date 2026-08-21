@@ -68,8 +68,15 @@ export function findWorkspaceBySlug(slug: string) {
 /**
  * Finds an existing contact by normalized email, or creates one.
  *
- * Uses a raw `INSERT ... ON CONFLICT DO NOTHING` pattern via Prisma's upsert
- * so that a concurrent inbound for the same sender does not create a duplicate.
+ * `contacts_workspace_email_key` (prisma/migrations/.../migration.sql) is a
+ * partial unique index on `(workspace_id, email) WHERE email IS NOT NULL` —
+ * hand-written because Prisma has no partial-index syntax, so it isn't a
+ * `@@unique` in schema.prisma and Prisma's typed `upsert()` can't target it.
+ * This is raw SQL for exactly that reason: it's a real atomic
+ * `INSERT ... ON CONFLICT DO UPDATE` against that index, not a find-then-create
+ * — two concurrent inbounds for the same brand-new sender resolve to one
+ * Contact row instead of racing into a duplicate (or, since the index already
+ * existed, into an unhandled unique-violation error).
  */
 export async function findOrCreateContactByEmail(
   client: Tx,
@@ -77,22 +84,14 @@ export async function findOrCreateContactByEmail(
   email: string,
   name: string | null,
 ): Promise<{ id: string }> {
-  // Try find first — the common case avoids the upsert entirely.
-  const existing = await client.contact.findFirst({
-    where: { workspaceId: scope.workspaceId, email },
-    select: { id: true },
-  });
-  if (existing) return existing;
-
-  return client.contact.create({
-    data: {
-      workspaceId: scope.workspaceId,
-      email,
-      name: name ?? null,
-      identitySource: 'EMAIL',
-    },
-    select: { id: true },
-  });
+  const rows = await client.$queryRaw<Array<{ id: string }>>`
+    INSERT INTO contacts (id, workspace_id, email, name, identity_source, created_at, updated_at, last_seen_at)
+    VALUES (gen_random_uuid(), ${scope.workspaceId}::uuid, ${email}, ${name}, 'EMAIL', now(), now(), now())
+    ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL
+      DO UPDATE SET email = EXCLUDED.email
+    RETURNING id
+  `;
+  return rows[0]!;
 }
 
 // ─── Thread matching ───────────────────────────────────────────────────────────
@@ -181,6 +180,17 @@ export function findEmailThread(
 }
 
 /**
+ * Bounded RFC References chain: keep the first message ID plus the most recent 8.
+ * Empty input starts a new chain at `newMessageId`.
+ */
+export function boundReferenceChain(prevRefs: string[], newMessageId: string): string[] {
+  if (prevRefs.length === 0 || !prevRefs[0]) return [newMessageId];
+  const first = prevRefs[0];
+  const combined = [...prevRefs.slice(1), newMessageId];
+  return [first, ...combined.slice(-8)];
+}
+
+/**
  * Upserts an EmailThread row, updating `lastMessageId` and the bounded
  * `referencesJson` chain (first + last 8).
  */
@@ -195,19 +205,7 @@ export function upsertEmailThread(
     prevReferences: string[];
   },
 ): Promise<{ id: string }> {
-  // Bounded References chain: keep the first message ID plus the most recent 8.
-  // If the chain is empty, the new message ID becomes the first entry.
-  const prevRefs = data.prevReferences;
-  let newRefs: string[];
-  if (prevRefs.length === 0 || !prevRefs[0]) {
-    newRefs = [data.newMessageId];
-  } else {
-    const first: string = prevRefs[0];
-    const rest = prevRefs.slice(1);
-    const combined = [...rest, data.newMessageId];
-    // Keep at most 8 trailing entries plus the first.
-    newRefs = [first, ...combined.slice(-8)];
-  }
+  const newRefs = boundReferenceChain(data.prevReferences, data.newMessageId);
 
   return client.emailThread.upsert({
     where: {

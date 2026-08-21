@@ -1,14 +1,15 @@
 import { Worker } from 'bullmq';
-import { AI } from '@gigachad/shared';
+import { AI, type SummaryUpdatedPayload } from '@gigachad/shared';
+import type Redis from 'ioredis';
 
 import type { Db } from '../../../db';
 import { env } from '../../../env';
+import { trimNewestFirstContext } from '../../../lib/ai/context';
 import { generateSummary, PROMPT_VERSION } from '../../../lib/ai/llm';
 import { AI_SUMMARY_QUEUE, type AiSummaryJobData } from '../../../lib/ai/queue';
 import { logger } from '../../../lib/logger';
 import { emitSummaryUpdated } from '../../../realtime/emit';
 import * as repo from '../repo';
-import type Redis from 'ioredis';
 
 /**
  * No tokenizer runs in the request path (docs/08-ai.md) — the total context
@@ -41,6 +42,7 @@ export function createAiSummaryWorker(db: Db, connection: Redis): Worker<AiSumma
 
       if (!env.aiEnabled) {
         logger.warn({ conversationId }, 'ai summary skipped: AI not enabled');
+        await persistErrorAndEmit(db, workspaceId, conversationId, 'AI_UNAVAILABLE');
         return;
       }
 
@@ -48,6 +50,7 @@ export function createAiSummaryWorker(db: Db, connection: Redis): Worker<AiSumma
       const messages = await repo.loadMessageContext(workspaceId, conversationId);
       if (messages.length === 0) {
         logger.warn({ conversationId }, 'ai summary: no messages found');
+        await persistErrorAndEmit(db, workspaceId, conversationId, 'AI_INVALID_OUTPUT');
         return;
       }
 
@@ -63,11 +66,7 @@ export function createAiSummaryWorker(db: Db, connection: Redis): Worker<AiSumma
       // tokenizer). `contextLines` is newest-first, so trimming from the end
       // drops the OLDEST messages first, keeping the most recent ones intact.
       const maxContextChars = AI.totalContextTokens * CHARS_PER_TOKEN_APPROX;
-      while (contextLines.length > 1 && contextLines.join('\n\n').length > maxContextChars) {
-        contextLines.pop();
-      }
-
-      const messageContext = contextLines.join('\n\n');
+      const messageContext = trimNewestFirstContext(contextLines, maxContextChars).join('\n\n');
 
       // Include the previous summary text if one exists.
       const existingRow = await repo.findSummaryForUpdate(db, workspaceId, conversationId);
@@ -109,19 +108,56 @@ export function createAiSummaryWorker(db: Db, connection: Redis): Worker<AiSumma
         }
       });
 
-      // ── Emit socket event ─────────────────────────────────────────────────
-      const finalRow = await repo.findSummaryForUpdate(db, workspaceId, conversationId);
-      if (finalRow) {
-        emitSummaryUpdated(workspaceId, conversationId, {
-          conversationId,
-          state: finalRow.state as 'QUEUED' | 'READY' | 'ERROR',
-          updatedAt: finalRow.updatedAt.toISOString(),
-        });
-      }
+      await emitCurrentSummary(db, workspaceId, conversationId);
     },
     {
       connection,
       concurrency: 2,
     },
   );
+}
+
+async function persistErrorAndEmit(
+  db: Db,
+  workspaceId: string,
+  conversationId: string,
+  errorCode: string,
+): Promise<void> {
+  await db.$transaction((tx) =>
+    repo.updateSummaryError(tx, workspaceId, conversationId, errorCode),
+  );
+  await emitCurrentSummary(db, workspaceId, conversationId);
+}
+
+async function emitCurrentSummary(
+  db: Db,
+  workspaceId: string,
+  conversationId: string,
+): Promise<void> {
+  const finalRow = await repo.findSummaryForUpdate(db, workspaceId, conversationId);
+  if (!finalRow) return;
+  const payload: SummaryUpdatedPayload = {
+    conversationId,
+    state: finalRow.state as SummaryUpdatedPayload['state'],
+    updatedAt: finalRow.updatedAt.toISOString(),
+  };
+  emitSummaryUpdated(workspaceId, conversationId, payload);
+}
+
+/**
+ * Called when a job exhausts all BullMQ retries so the row does not stay
+ * QUEUED forever (the dashboard has no retry button in that state, and POST
+ * is a no-op while QUEUED).
+ */
+export async function onAiSummaryFailed(
+  db: Db,
+  job: { data: AiSummaryJobData } | undefined,
+): Promise<void> {
+  if (!job) return;
+  const { workspaceId, conversationId } = job.data;
+  try {
+    await persistErrorAndEmit(db, workspaceId, conversationId, 'AI_INVALID_OUTPUT');
+  } catch (err) {
+    logger.error({ err, conversationId }, 'ai summary: could not mark as failed');
+  }
 }

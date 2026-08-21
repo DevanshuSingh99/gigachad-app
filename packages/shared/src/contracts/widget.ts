@@ -48,6 +48,8 @@ export interface WidgetConversationDto {
   subject: string | null;
   lastMessageAt: string;
   customerLastReadSequence: number;
+  /** Highest agent-read sequence — drives read ticks on the customer's own messages. */
+  agentLastReadSequence: number;
 }
 
 export type { MessageDto, WidgetMessageDto };

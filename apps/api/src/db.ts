@@ -37,6 +37,7 @@ const TENANT_MODELS = new Set([
   'EmailThread',
   'EmailMessage',
   'CustomDomain',
+  'EmbedToken',
 ]);
 
 /**

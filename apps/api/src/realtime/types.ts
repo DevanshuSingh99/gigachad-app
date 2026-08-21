@@ -34,3 +34,6 @@ export interface SocketData {
 
 export type IoServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 export type IoSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+
+/** Join (or re-join) a conversation room and register presence. */
+export type EnsureSubscribed = (conversationId: string) => Promise<boolean>;

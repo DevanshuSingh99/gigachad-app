@@ -76,6 +76,8 @@ export interface MembershipDto {
   workspaceId: string;
   workspaceName: string;
   workspaceSlug: string;
+  /** Inbound mailbox for this workspace, e.g. `acme@inbound.example.com`. */
+  supportAddress: string;
   role: WorkspaceRole;
 }
 

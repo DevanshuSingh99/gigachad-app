@@ -1,8 +1,9 @@
 'use client';
 
-import { Avatar, Listbox, ListboxItem, ScrollShadow, Select, SelectItem, Skeleton, Tabs, Tab } from '@heroui/react';
+import { Avatar, Listbox, ListboxItem, ScrollShadow, Skeleton, Tabs, Tab } from '@heroui/react';
 import type { ConversationDto } from '@gigachad/shared';
 
+import { NativeSelect } from '../NativeSelect';
 import { ChannelChip, StatusChip } from './StatusChip';
 import type { ConversationFilters } from '@/lib/inbox';
 import { useConversations } from '@/lib/inbox';
@@ -57,12 +58,10 @@ export function ConversationList({
             (docs/15-frontend-and-widget.md). Two Selects at this width already
             behave that way without extra breakpoint logic. */}
         <div className="flex gap-2">
-          <Select
+          <NativeSelect
             aria-label="Channel"
-            size="sm"
             className="flex-1"
-            placeholder="All channels"
-            selectedKeys={filters.channel ? [filters.channel] : []}
+            value={filters.channel ?? ''}
             onChange={(e) =>
               onFiltersChange({
                 ...filters,
@@ -70,26 +69,26 @@ export function ConversationList({
               })
             }
           >
-            <SelectItem key="CHAT">Chat</SelectItem>
-            <SelectItem key="EMAIL">Email</SelectItem>
-          </Select>
-          <Select
+            <option value="">All channels</option>
+            <option value="CHAT">Chat</option>
+            <option value="EMAIL">Email</option>
+          </NativeSelect>
+          <NativeSelect
             aria-label="Assignee"
-            size="sm"
             className="flex-1"
-            placeholder="Anyone"
-            selectedKeys={filters.assigneeId ? [filters.assigneeId] : []}
+            value={filters.assigneeId ?? ''}
             onChange={(e) =>
               onFiltersChange({ ...filters, assigneeId: e.target.value || undefined })
             }
           >
-            <SelectItem key="unassigned">Unassigned</SelectItem>
-            <>
-              {(members.data ?? []).map((m) => (
-                <SelectItem key={m.userId}>{m.name}</SelectItem>
-              ))}
-            </>
-          </Select>
+            <option value="">Anyone</option>
+            <option value="unassigned">Unassigned</option>
+            {(members.data ?? []).map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.name}
+              </option>
+            ))}
+          </NativeSelect>
         </div>
       </div>
 

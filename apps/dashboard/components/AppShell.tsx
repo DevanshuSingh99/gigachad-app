@@ -88,6 +88,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <p className="text-default-400 truncate text-xs">{workspace.workspaceSlug}</p>
             </div>
           )}
+          <p className="text-default-400 truncate text-xs" title={workspace.supportAddress}>
+            {workspace.supportAddress}
+          </p>
 
           <nav className="flex gap-1 md:flex-col">
             {NAV.map((item) => (

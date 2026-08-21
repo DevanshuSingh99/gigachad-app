@@ -3,6 +3,7 @@
 import { Button, Textarea } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
 
+import { REALTIME } from '@gigachad/shared';
 import { newClientMessageId, useSendMessage } from '@/lib/inbox';
 import { useActiveWorkspace } from '@/lib/session';
 import { getSocket } from '@/lib/socket';
@@ -21,13 +22,18 @@ export function Composer({ conversationId }: { conversationId: string }) {
 
   // Client-side debounce, not per-keystroke emission: typing:start fires once
   // per burst, typing:stop fires ~2s after the last keystroke or immediately on
-  // send. The TTL in presence.ts is the safety net if stop is ever missed.
+  // send. The TTL in presence.ts is the safety net if stop is ever missed — but
+  // a continuous burst longer than that TTL still needs a periodic re-emit
+  // (refreshTimerRef below), or the receiver's indicator silently expires
+  // mid-burst even though this side never stopped typing.
   const isTypingRef = useRef(false);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
     return () => {
       clearTimeout(stopTimerRef.current);
+      clearInterval(refreshTimerRef.current);
       if (isTypingRef.current && workspaceId) {
         getSocket(workspaceId).emit('typing:stop', { conversationId });
       }
@@ -43,11 +49,15 @@ export function Composer({ conversationId }: { conversationId: string }) {
     if (value.trim() && !isTypingRef.current) {
       isTypingRef.current = true;
       socket.emit('typing:start', { conversationId });
+      refreshTimerRef.current = setInterval(() => {
+        socket.emit('typing:start', { conversationId });
+      }, Math.floor(REALTIME.typingTtlMs * 0.6));
     }
 
     clearTimeout(stopTimerRef.current);
     stopTimerRef.current = setTimeout(() => {
       isTypingRef.current = false;
+      clearInterval(refreshTimerRef.current);
       socket.emit('typing:stop', { conversationId });
     }, 2_000);
   };
@@ -59,6 +69,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
     // never blocks on the network, even without full optimistic rendering yet.
     setText('');
     clearTimeout(stopTimerRef.current);
+    clearInterval(refreshTimerRef.current);
     if (isTypingRef.current && workspaceId) {
       isTypingRef.current = false;
       getSocket(workspaceId).emit('typing:stop', { conversationId });

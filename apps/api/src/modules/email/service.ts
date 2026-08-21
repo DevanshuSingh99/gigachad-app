@@ -214,88 +214,107 @@ export async function ingestInboundEmail(
   }
 
   // ── 7+8. Persist in one transaction ──────────────────────────────────────
-  const result = await db.$transaction(async (tx) => {
-    // Register idempotency key inside the transaction so a rollback retries.
-    await repo.insertIdempotencyKey(tx, providerEventId, workspace.id);
+  let result;
+  try {
+    result = await db.$transaction(async (tx) => {
+      // Register idempotency key inside the transaction so a rollback retries.
+      await repo.insertIdempotencyKey(tx, providerEventId, workspace.id);
 
-    let createdConversation = false;
-    let resolvedConversationId: string;
+      let createdConversation = false;
+      let resolvedConversationId: string;
 
-    if (conversationId) {
-      resolvedConversationId = conversationId;
-    } else {
-      // No thread match — find or create contact and create a new EMAIL conversation.
-      const contact = await repo.findOrCreateContactByEmail(tx, scope, fromEmail, fromName);
+      if (conversationId) {
+        resolvedConversationId = conversationId;
+      } else {
+        // No thread match — find or create contact and create a new EMAIL conversation.
+        const contact = await repo.findOrCreateContactByEmail(tx, scope, fromEmail, fromName);
 
-      const conversation = await tx.conversation.create({
-        data: {
-          workspaceId: workspace.id,
-          contactId: contact.id,
-          channel: 'EMAIL',
-          subject,
-        },
-        select: { id: true },
+        const conversation = await tx.conversation.create({
+          data: {
+            workspaceId: workspace.id,
+            contactId: contact.id,
+            channel: 'EMAIL',
+            subject,
+          },
+          select: { id: true },
+        });
+        resolvedConversationId = conversation.id;
+        createdConversation = true;
+      }
+
+      // Allocate sequence and maybe reopen SNOOZED/RESOLVED (inbound is CUSTOMER).
+      const allocation = await allocateSequenceAndMaybeReopen(
+        tx,
+        scope,
+        resolvedConversationId,
+        'CUSTOMER',
+      );
+      if (!allocation) throw notFound('conversation');
+
+      // Insert the inbox message.
+      const message = await insertMessage(tx, {
+        workspaceId: workspace.id,
+        conversationId: resolvedConversationId,
+        senderType: 'CUSTOMER',
+        bodyText,
+        ...(bodyHtml ? { bodyHtml } : {}),
+        clientMessageId: providerEventId,
+        sequence: allocation.sequence,
       });
-      resolvedConversationId = conversation.id;
-      createdConversation = true;
+
+      // Insert transport metadata.
+      await repo.insertEmailMessage(tx, {
+        workspaceId: workspace.id,
+        gigachadMessageId: message.id,
+        messageId: incomingMessageId,
+        ...(inReplyTo ? { inReplyTo } : {}),
+        ...(references.length > 0 ? { referencesJson: references } : {}),
+        fromAddress: fromEmail,
+        toAddresses: [recipientAddress],
+        providerEventId,
+        direction: 'INBOUND',
+        deliveryStatus: 'DELIVERED',
+        receivedAt: new Date(),
+      });
+
+      // Upsert the thread (creates it for a new conversation; updates for an existing one).
+      const existingThread = await repo.findEmailThread(tx, scope, resolvedConversationId);
+      const prevRefs = Array.isArray(existingThread?.referencesJson)
+        ? (existingThread.referencesJson as string[])
+        : [];
+
+      await repo.upsertEmailThread(tx, scope, {
+        conversationId: resolvedConversationId,
+        mailboxAddress,
+        newMessageId: incomingMessageId,
+        ...(providerThreadId ? { providerThreadId } : {}),
+        prevReferences: prevRefs,
+      });
+
+      return {
+        conversationId: resolvedConversationId,
+        message: messageDto(message),
+        allocation,
+        isNewConversation: createdConversation,
+      };
+    });
+  } catch (error) {
+    // A concurrent delivery of the same webhook (Brevo retries aggressively)
+    // can pass the early `findIdempotencyKey` check on both sides before
+    // either transaction commits; the `idempotency_keys` unique index is what
+    // actually prevents the duplicate, and the losing side lands here. Treat
+    // it the same as the early dedup check above — acknowledge, don't error —
+    // instead of surfacing a 500 that would make the provider retry again.
+    // Named explicitly (not via the generic isUniqueViolationOn(error, 'key')
+    // substring check) because that check would also match
+    // `messages_conversation_id_client_message_id_key`, a real, unrelated
+    // duplicate-message error this same transaction can throw.
+    if (isUniqueViolationOn(error, 'idempotency_keys_scope_key_key')) {
+      logger.info({ providerEventId }, 'inbound email: duplicate event (race), skipping');
+      return null;
     }
-
-    // Allocate sequence and maybe reopen SNOOZED/RESOLVED (inbound is CUSTOMER).
-    const allocation = await allocateSequenceAndMaybeReopen(
-      tx,
-      scope,
-      resolvedConversationId,
-      'CUSTOMER',
-    );
-    if (!allocation) throw notFound('conversation');
-
-    // Insert the inbox message.
-    const message = await insertMessage(tx, {
-      workspaceId: workspace.id,
-      conversationId: resolvedConversationId,
-      senderType: 'CUSTOMER',
-      bodyText,
-      ...(bodyHtml ? { bodyHtml } : {}),
-      clientMessageId: providerEventId,
-      sequence: allocation.sequence,
-    });
-
-    // Insert transport metadata.
-    await repo.insertEmailMessage(tx, {
-      workspaceId: workspace.id,
-      gigachadMessageId: message.id,
-      messageId: incomingMessageId,
-      ...(inReplyTo ? { inReplyTo } : {}),
-      ...(references.length > 0 ? { referencesJson: references } : {}),
-      fromAddress: fromEmail,
-      toAddresses: [recipientAddress],
-      providerEventId,
-      direction: 'INBOUND',
-      deliveryStatus: 'DELIVERED',
-      receivedAt: new Date(),
-    });
-
-    // Upsert the thread (creates it for a new conversation; updates for an existing one).
-    const existingThread = await repo.findEmailThread(tx, scope, resolvedConversationId);
-    const prevRefs = Array.isArray(existingThread?.referencesJson)
-      ? (existingThread.referencesJson as string[])
-      : [];
-
-    await repo.upsertEmailThread(tx, scope, {
-      conversationId: resolvedConversationId,
-      mailboxAddress,
-      newMessageId: incomingMessageId,
-      ...(providerThreadId ? { providerThreadId } : {}),
-      prevReferences: prevRefs,
-    });
-
-    return {
-      conversationId: resolvedConversationId,
-      message: messageDto(message),
-      allocation,
-      isNewConversation: createdConversation,
-    };
-  });
+    throw error;
+  }
 
   // ── 9. Emit socket events (invariant 2: persist then emit) ───────────────
   emitMessageNew(workspace.id, result.conversationId, {

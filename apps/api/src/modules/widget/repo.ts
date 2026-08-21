@@ -23,6 +23,7 @@ const WIDGET_CONVERSATION_SELECT = {
   subject: true,
   lastMessageAt: true,
   customerLastReadSequence: true,
+  agentLastReadSequence: true,
 } as const;
 
 /** Cross-tenant by nature: a widget key is what determines the workspace, not the reverse. */

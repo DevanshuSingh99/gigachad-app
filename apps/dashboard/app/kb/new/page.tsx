@@ -1,11 +1,13 @@
 'use client';
 
-import { Button, Input, ScrollShadow, Select, SelectItem, Spinner } from '@heroui/react';
+import { Button, Input, ScrollShadow, Spinner } from '@heroui/react';
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { AppShell } from '@/components/AppShell';
+import { ArticleBodyEditor } from '@/components/kb/ArticleBodyEditor';
+import { NativeSelect } from '@/components/NativeSelect';
 import { slugify, useCategories, useCreateArticle } from '@/lib/kb';
 import { useActiveWorkspace } from '@/lib/session';
 
@@ -87,52 +89,22 @@ function NewArticleScreen() {
               className="flex-1"
               isRequired
             />
-            <Select
-              label="Category"
-              className="flex-1"
-              selectedKeys={[categoryId]}
+            <NativeSelect
+              aria-label="Category"
+              className="h-14 flex-1"
+              value={categoryId}
               onChange={(e) => setCategoryId(e.target.value || '__none__')}
             >
-              {[
-                { id: '__none__', name: 'Uncategorized' },
-                ...(categories.data ?? []),
-              ].map((c) => (
-                <SelectItem key={c.id}>{c.name}</SelectItem>
+              <option value="__none__">Uncategorized</option>
+              {(categories.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
-            </Select>
+            </NativeSelect>
           </div>
 
-          <div className="border-divider rounded-large border">
-            <div className="border-divider bg-content2 flex flex-wrap gap-1 border-b p-2">
-              {(['bold', 'italic', 'underline'] as const).map((cmd) => (
-                <button
-                  key={cmd}
-                  type="button"
-                  className="rounded px-2 py-1 text-sm hover:bg-content3"
-                  onMouseDown={(e) => { e.preventDefault(); document.execCommand(cmd); }}
-                >
-                  {cmd === 'bold' ? <b>B</b> : cmd === 'italic' ? <i>I</i> : <u>U</u>}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-sm hover:bg-content3"
-                onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); }}
-              >• List</button>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-sm hover:bg-content3"
-                onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertOrderedList'); }}
-              >1. List</button>
-            </div>
-            <div
-              className="prose min-h-64 p-4 text-sm focus:outline-none"
-              contentEditable
-              suppressContentEditableWarning
-              onInput={(e) => setBodyHtml(e.currentTarget.innerHTML)}
-              data-placeholder="Write your article here…"
-            />
-          </div>
+          <ArticleBodyEditor onChange={setBodyHtml} />
         </div>
       </ScrollShadow>
     </div>

@@ -1,6 +1,7 @@
 import type { LoginInput, MeDto, SignupInput } from '@gigachad/shared';
 
 import { db } from '../../db';
+import { supportAddressFor } from '../../env';
 import { AppError } from '../../lib/errors';
 import { burnPasswordVerification, hashPassword, verifyPassword } from '../../lib/password';
 import { isUniqueViolationOn } from '../../lib/prismaErrors';
@@ -63,7 +64,11 @@ export async function signup(input: SignupInput): Promise<AuthResult> {
             {
               role: 'ADMIN',
               workspaceId: workspace.id,
-              workspace: { name: workspace.name, slug: workspace.slug },
+              workspace: {
+                name: workspace.name,
+                slug: workspace.slug,
+                supportAddress: supportAddressFor(workspace.slug),
+              },
             },
           ]),
           session,

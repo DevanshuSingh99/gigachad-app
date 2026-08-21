@@ -1,18 +1,13 @@
-# VM only, selected by COMPOSE_FILE in the VM's .env.
-# Adds restart policies and the memory limits from docs/10-deployment.md.
+# VM only. Pair with compose.caddy.yaml so Caddy owns 80/443:
+#   COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.caddy.yaml
+# Adds restart policies and the memory limits from documentation/12-deploy.md.
 # Sized for 1 vCPU / 6 GB with 2 GB of swap.
 #
-# No Caddy service here. This particular VM already runs a system-level nginx
-# that owns ports 80/443 for other, unrelated projects (orders-and-settlements-*,
-# rwa-*) — a second process cannot bind the same ports, and reconfiguring that
-# nginx's TLS handling to make room for Caddy's on-demand-TLS model is out of
-# scope for this deploy. Instead, `api` publishes to loopback only, and the
-# existing nginx reverse-proxies gigachad-api.devjs.in / gigachad-kb.devjs.in to
-# it directly — the same pattern nginx already uses for the other services
-# running on this box. Trade-off accepted: Phase H's on-demand TLS for
-# customer-added custom domains has no working path under this topology (it
-# needs to terminate 443 itself for arbitrary hostnames); that feature is
-# deferred rather than live on this deployment.
+# TLS and custom-domain HTTPS are Caddy (`compose.caddy.yaml` + `Caddyfile`):
+# named hosts for gigachad-api.devjs.in / gigachad-kb.devjs.in, and on-demand
+# certificates for VERIFIED knowledge-base hostnames via /internal/tls/ask.
+# `api` still publishes to loopback for local debugging; public traffic goes
+# through Caddy on the Compose network.
 
 services:
   postgres:

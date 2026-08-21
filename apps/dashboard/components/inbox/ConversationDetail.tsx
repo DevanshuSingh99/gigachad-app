@@ -13,14 +13,15 @@ import {
   SelectItem,
   Skeleton,
 } from '@heroui/react';
-import type { MessageDto, PresenceUpdatePayload, TypingPayload } from '@gigachad/shared';
-import { useEffect, useState } from 'react';
+import { REALTIME, type ConversationSyncPayload, type MessageDto, type MessageReadPayload, type PresenceUpdatePayload, type TypingPayload } from '@gigachad/shared';
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Composer } from './Composer';
 import { DeliveryBadge, EmailComposer } from './EmailComposer';
 import { SummaryPanel } from './SummaryPanel';
 import { ChannelChip, StatusChip } from './StatusChip';
-import { useConversation, useMessages, usePatchConversation } from '@/lib/inbox';
+import { useConversation, useMessages, usePatchConversation, messagesKey } from '@/lib/inbox';
 import { useActiveWorkspace, useMembers, useMe } from '@/lib/session';
 import { getSocket } from '@/lib/socket';
 
@@ -32,9 +33,24 @@ import { getSocket } from '@/lib/socket';
  * invalidation-only sockets does not apply to state that has no REST
  * counterpart to invalidate).
  */
-function useConversationRoom(workspaceId: string | undefined, conversationId: string) {
+function useConversationRoom(
+  workspaceId: string | undefined,
+  conversationId: string,
+  persistedCustomerReadSeq: number,
+  lastKnownSequence: number,
+) {
+  const queryClient = useQueryClient();
   const [typing, setTyping] = useState(false);
   const [online, setOnline] = useState(false);
+  const [customerReadSeq, setCustomerReadSeq] = useState(persistedCustomerReadSeq);
+  const typingExpiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const presenceExpiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastSeqRef = useRef(lastKnownSequence);
+  lastSeqRef.current = lastKnownSequence;
+
+  useEffect(() => {
+    setCustomerReadSeq((n) => Math.max(n, persistedCustomerReadSeq));
+  }, [persistedCustomerReadSeq]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -43,37 +59,80 @@ function useConversationRoom(workspaceId: string | undefined, conversationId: st
     setTyping(false);
     setOnline(false);
 
-    // lastSequence: 0 — this is a fresh subscribe, not a reconnect resuming a
-    // known position. The initial page of messages already came from the
-    // regular HTTP fetch (useMessages); conversation:sync here exists mainly to
-    // authorize the room join. A real reconnect-resume path arrives with
-    // Phase D's offline-queue work on the widget side.
-    socket.emit('conversation:subscribe', { conversationId, lastSequence: 0 });
+    const armPresenceExpiry = (status: 'ONLINE' | 'OFFLINE') => {
+      clearTimeout(presenceExpiry.current);
+      if (status === 'OFFLINE') return;
+      presenceExpiry.current = setTimeout(() => setOnline(false), REALTIME.presenceTtlMs + 5_000);
+    };
+
+    const subscribe = () => {
+      socket.emit('conversation:subscribe', {
+        conversationId,
+        lastSequence: lastSeqRef.current,
+      });
+    };
+
+    const onSync = (p: ConversationSyncPayload) => {
+      if (p.conversationId !== conversationId || !p.truncated) return;
+      // Cap exceeded: HTTP page is the catch-up path (docs/06-realtime.md).
+      void queryClient.invalidateQueries({ queryKey: messagesKey(workspaceId, conversationId) });
+    };
 
     const onTypingStart = (p: TypingPayload) => {
-      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') setTyping(true);
+      if (p.conversationId !== conversationId || p.participantType !== 'CUSTOMER') return;
+      setTyping(true);
+      clearTimeout(typingExpiry.current);
+      typingExpiry.current = setTimeout(() => setTyping(false), REALTIME.typingTtlMs + 500);
     };
     const onTypingStop = (p: TypingPayload) => {
-      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') setTyping(false);
+      if (p.conversationId !== conversationId || p.participantType !== 'CUSTOMER') return;
+      clearTimeout(typingExpiry.current);
+      setTyping(false);
     };
     const onPresence = (p: PresenceUpdatePayload) => {
-      if (p.conversationId === conversationId && p.participantType === 'CUSTOMER') {
-        setOnline(p.status === 'ONLINE');
+      if (p.conversationId !== conversationId || p.participantType !== 'CUSTOMER') return;
+      setOnline(p.status === 'ONLINE');
+      armPresenceExpiry(p.status);
+    };
+    const onRead = (p: MessageReadPayload) => {
+      if (p.conversationId === conversationId && p.readerType === 'CUSTOMER') {
+        setCustomerReadSeq((n) => Math.max(n, p.lastReadSequence));
       }
     };
 
+    socket.on('connect', subscribe);
+    socket.on('conversation:sync', onSync);
     socket.on('typing:start', onTypingStart);
     socket.on('typing:stop', onTypingStop);
     socket.on('presence:update', onPresence);
+    socket.on('message:read', onRead);
+    if (socket.connected) subscribe();
 
     return () => {
+      clearTimeout(typingExpiry.current);
+      clearTimeout(presenceExpiry.current);
+      socket.off('connect', subscribe);
+      socket.off('conversation:sync', onSync);
       socket.off('typing:start', onTypingStart);
       socket.off('typing:stop', onTypingStop);
       socket.off('presence:update', onPresence);
+      socket.off('message:read', onRead);
     };
-  }, [workspaceId, conversationId]);
+  }, [workspaceId, conversationId, queryClient]);
 
-  return { customerTyping: typing, customerOnline: online };
+  return { customerTyping: typing, customerOnline: online, customerReadSeq };
+}
+
+function ReadTicks({ read }: { read: boolean }) {
+  return (
+    <span
+      className={`text-[11px] leading-none tracking-tighter ${read ? 'text-primary' : 'text-default-400'}`}
+      aria-label={read ? 'Read' : 'Sent'}
+      title={read ? 'Read' : 'Sent'}
+    >
+      {read ? '✓✓' : '✓'}
+    </span>
+  );
 }
 
 const SNOOZE_OPTIONS = [
@@ -87,12 +146,16 @@ function MessageBubble({
   message,
   isOwn,
   isEmail,
+  customerReadSeq,
 }: {
   message: MessageDto;
   isOwn: boolean;
   isEmail?: boolean;
+  customerReadSeq: number;
 }) {
   const fromCustomer = message.senderType === 'CUSTOMER';
+  const showChatTicks = !fromCustomer && !isEmail;
+  const read = showChatTicks && message.sequence <= customerReadSeq;
   return (
     <div className={`flex gap-2 ${fromCustomer ? '' : 'flex-row-reverse'}`}>
       <Avatar size="sm" name={fromCustomer ? 'C' : (message.senderName ?? 'A')} className="mt-1 shrink-0" />
@@ -110,6 +173,7 @@ function MessageBubble({
             {new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
             {isOwn ? ' · you' : ''}
           </span>
+          {showChatTicks ? <ReadTicks read={read} /> : null}
           {isEmail && !fromCustomer && message.deliveryStatus !== 'PENDING' ? (
             <DeliveryBadge status={message.deliveryStatus} />
           ) : null}
@@ -133,7 +197,16 @@ export function ConversationDetail({
   const messages = useMessages(workspaceId, conversationId);
   const members = useMembers(workspaceId);
   const patch = usePatchConversation(workspaceId, conversationId);
-  const { customerTyping, customerOnline } = useConversationRoom(workspaceId, conversationId);
+  const lastKnownSequence = (messages.data?.items ?? []).reduce(
+    (max, m) => Math.max(max, m.sequence),
+    0,
+  );
+  const { customerTyping, customerOnline, customerReadSeq } = useConversationRoom(
+    workspaceId,
+    conversationId,
+    conversation.data?.customerLastReadSequence ?? 0,
+    lastKnownSequence,
+  );
 
   // Advances the read position once the messages a member is looking at are
   // actually loaded — a lower value is ignored server-side, so this is safe to
@@ -250,23 +323,31 @@ export function ConversationDetail({
           <p className="text-default-500 text-sm">No messages yet.</p>
         ) : (
           <div className="flex flex-col gap-3">
-            {rows.map((m) => (
+            {rows
+              .slice()
+              .sort((a, b) => a.sequence - b.sequence)
+              .map((m) => (
               <MessageBubble
                 key={m.id}
                 message={m}
                 isOwn={m.senderType === 'AGENT' && m.senderUserId === me.data?.user.id}
                 isEmail={c.channel === 'EMAIL'}
+                customerReadSeq={customerReadSeq}
               />
             ))}
+            {customerTyping ? (
+              <div className="flex gap-2" aria-live="polite" aria-label={`${c.contact.name ?? 'Customer'} is typing`}>
+                <Avatar size="sm" name="C" className="mt-1 shrink-0" />
+                <div className="bg-content2 rounded-large flex items-center gap-1 px-3 py-2">
+                  <span className="bg-default-400 inline-block h-1.5 w-1.5 animate-pulse rounded-full" />
+                  <span className="bg-default-400 inline-block h-1.5 w-1.5 animate-pulse rounded-full [animation-delay:150ms]" />
+                  <span className="bg-default-400 inline-block h-1.5 w-1.5 animate-pulse rounded-full [animation-delay:300ms]" />
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       </ScrollShadow>
-
-      {customerTyping ? (
-        <p className="text-default-400 px-4 pb-1 text-xs" aria-live="polite">
-          {c.contact.name ?? 'Customer'} is typing…
-        </p>
-      ) : null}
 
       {c.channel === 'EMAIL' ? (
         <EmailComposer conversationId={conversationId} />

@@ -6,7 +6,7 @@ import { markConversationRead } from '../../modules/conversations/service';
 import { findOwnConversation } from '../../modules/widget/repo';
 import { createMessage } from '../../modules/messages/service';
 import { markRead as markWidgetRead } from '../../modules/widget/service';
-import type { IoSocket } from '../types';
+import type { EnsureSubscribed, IoSocket } from '../types';
 
 /**
  * `message:send` → persist → `message:accepted` ack. `message:new` is NOT
@@ -22,7 +22,7 @@ import type { IoSocket } from '../types';
  * happens after the transaction commits — never before, which is what makes a
  * client's retry after an ambiguous failure safe rather than a guess.
  */
-export function registerMessageHandlers(socket: IoSocket): void {
+export function registerMessageHandlers(socket: IoSocket, options: { ensureSubscribed: EnsureSubscribed }): void {
   socket.on('message:send', async (raw, ack) => {
     const parsed = messageSendInput.safeParse(raw);
     if (!parsed.success) {
@@ -32,6 +32,7 @@ export function registerMessageHandlers(socket: IoSocket): void {
     const { conversationId, clientMessageId, bodyText, bodyHtml } = parsed.data;
     const principal = socket.data.principal;
     const scope = { workspaceId: principal.workspaceId };
+    await options.ensureSubscribed(conversationId);
 
     const { allowed, retryAfterSeconds } = await consume('socketMessageSend', socket.id);
     if (!allowed) {
@@ -86,6 +87,7 @@ export function registerMessageHandlers(socket: IoSocket): void {
     const { conversationId, lastReadSequence } = parsed.data;
     const principal = socket.data.principal;
     const scope = { workspaceId: principal.workspaceId };
+    await options.ensureSubscribed(conversationId);
 
     try {
       const result =

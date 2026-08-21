@@ -5,8 +5,6 @@ import {
   Chip,
   Input,
   ScrollShadow,
-  Select,
-  SelectItem,
   Skeleton,
   Spinner,
   Switch,
@@ -16,6 +14,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 import { AppShell } from '@/components/AppShell';
+import { ArticleBodyEditor } from '@/components/kb/ArticleBodyEditor';
+import { NativeSelect } from '@/components/NativeSelect';
 import {
   slugify,
   useArticle,
@@ -162,69 +162,31 @@ function ArticleEditorScreen({ articleId }: { articleId: string }) {
               description="Used in the public URL"
               className="flex-1"
             />
-            <Select
-              label="Category"
-              className="flex-1"
-              selectedKeys={[categoryId]}
-              onChange={(e) => { setCategoryId(e.target.value || '__none__'); setDirty(true); }}
-            >
-              {[
-                { id: '__none__', name: 'Uncategorized' },
-                ...(categories.data ?? []),
-              ].map((c) => (
-                <SelectItem key={c.id}>{c.name}</SelectItem>
-              ))}
-            </Select>
-          </div>
-
-          {/* Body editor — contenteditable with basic toolbar */}
-          <div className="border-divider rounded-large border">
-            <div className="border-divider bg-content2 flex flex-wrap gap-1 border-b p-2">
-              {(['bold', 'italic', 'underline'] as const).map((cmd) => (
-                <button
-                  key={cmd}
-                  type="button"
-                  className="rounded px-2 py-1 text-sm hover:bg-content3"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    document.execCommand(cmd);
-                  }}
-                >
-                  {cmd === 'bold' ? <b>B</b> : cmd === 'italic' ? <i>I</i> : <u>U</u>}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-sm hover:bg-content3"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  document.execCommand('insertUnorderedList');
-                }}
-              >
-                • List
-              </button>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-sm hover:bg-content3"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  document.execCommand('insertOrderedList');
-                }}
-              >
-                1. List
-              </button>
-            </div>
-            <div
-              className="prose min-h-64 p-4 text-sm focus:outline-none"
-              contentEditable
-              suppressContentEditableWarning
-              dangerouslySetInnerHTML={{ __html: bodyHtml }}
-              onInput={(e) => {
-                setBodyHtml(e.currentTarget.innerHTML);
+            <NativeSelect
+              aria-label="Category"
+              className="h-14 flex-1"
+              value={categoryId}
+              onChange={(e) => {
+                setCategoryId(e.target.value || '__none__');
                 setDirty(true);
               }}
-            />
+            >
+              <option value="__none__">Uncategorized</option>
+              {(categories.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </NativeSelect>
           </div>
+
+          <ArticleBodyEditor
+            initialHtml={a.bodyHtml}
+            onChange={(html) => {
+              setBodyHtml(html);
+              setDirty(true);
+            }}
+          />
         </div>
       </ScrollShadow>
     </div>

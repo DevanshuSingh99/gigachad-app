@@ -29,7 +29,11 @@ export function listMembershipsForUser(userId: string) {
   return unscoped("list one user's own memberships across every workspace", () =>
     db.workspaceMember.findMany({
       where: { userId, status: 'ACTIVE' },
-      select: { role: true, workspaceId: true, workspace: { select: { name: true, slug: true } } },
+      select: {
+        role: true,
+        workspaceId: true,
+        workspace: { select: { name: true, slug: true, supportAddress: true } },
+      },
       orderBy: { createdAt: 'asc' },
     }),
   );

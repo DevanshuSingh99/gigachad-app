@@ -11,7 +11,7 @@ import type { IoServer } from './types';
 
 /**
  * A module-level reference to the attached Socket.IO server, set once at boot
- * (server.ts, right after attachSocketServer).
+ * (server.ts after attachSocketServer, worker.ts after attachRealtimeEmitter).
  *
  * This exists so "persist, then emit" (invariant 2) is a property of the WRITE
  * PATH — messages/service.ts's createMessage — rather than of whichever

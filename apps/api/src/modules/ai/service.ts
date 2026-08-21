@@ -11,6 +11,10 @@ import { parseSettings } from '../workspaces/dto';
 import { belowThresholdDto, eligibleDto, summaryDto } from './dto';
 import * as repo from './repo';
 
+function isQueuedStale(updatedAt: Date): boolean {
+  return Date.now() - updatedAt.getTime() > AI.queuedStaleSeconds * 1000;
+}
+
 // ─── GET /summary ─────────────────────────────────────────────────────────────
 
 /**
@@ -52,6 +56,11 @@ export async function getSummary(
   }
 
   const row = await repo.findSummary(scope, conversationId);
+  if (row?.state === 'QUEUED' && isQueuedStale(row.updatedAt)) {
+    // Worker never finished writing READY/ERROR — surface as error so Retry
+    // is available instead of spinning on "Generating summary…" forever.
+    return summaryDto({ ...row, state: 'ERROR', errorCode: row.errorCode ?? 'AI_INVALID_OUTPUT' }, stats.messageCount);
+  }
   if (!row) {
     // No summary has ever been generated. Distinguish "genuinely below
     // threshold" from "eligible, just never triggered" — the latter is not
@@ -120,7 +129,7 @@ export async function triggerSummary(
   // here without ever touching (and burning) the workspace's daily quota.
   const existing = await repo.findSummary(scope, conversationId);
   if (existing) {
-    if (existing.state === 'QUEUED') {
+    if (existing.state === 'QUEUED' && !isQueuedStale(existing.updatedAt)) {
       // Already in flight — idempotent: return the same "queued" state.
       // (This is a descriptive placeholder, not a real BullMQ job id — the
       // job id itself is never persisted or looked up by the client.)
@@ -168,10 +177,15 @@ export async function triggerSummary(
 
   // ── 5. Enqueue ────────────────────────────────────────────────────────────
   // Mark QUEUED in DB first so the GET endpoint reflects the in-flight state
-  // immediately (before the worker picks up the job).
-  await db.$transaction((tx) =>
-    repo.upsertSummaryQueued(tx, scope.workspaceId, conversationId),
+  // immediately (before the worker picks up the job). Atomic: if a concurrent
+  // request already won this transition between our cooldown check above and
+  // here, don't enqueue a second job for the same conversation.
+  const won = await db.$transaction((tx) =>
+    repo.tryMarkQueued(tx, scope.workspaceId, conversationId),
   );
+  if (!won) {
+    return { state: 'queued', jobId: `ai-summary:${conversationId}:queued` };
+  }
 
   // The BullMQ job id must be unique per enqueue attempt, not per
   // conversation: BullMQ keeps completed/failed job records around

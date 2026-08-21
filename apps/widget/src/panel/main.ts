@@ -1,13 +1,16 @@
 import { io, type Socket } from 'socket.io-client';
 import type {
   ClientToServerEvents,
+  ConversationSyncPayload,
   MessageNewPayload,
+  MessageReadPayload,
   PresenceUpdatePayload,
   ServerToClientEvents,
   SuggestionDto,
   TypingPayload,
   WidgetMessageDto,
 } from '@gigachad/shared';
+import { REALTIME } from '@gigachad/shared';
 
 import { WIDGET_NAMESPACE, isWidgetMessage, type InitMessage } from '../protocol';
 import { widgetFetch } from './api';
@@ -18,6 +21,15 @@ import { loadOutbox, loadToken, saveOutbox, saveToken, type Draft } from './stor
  * launcher — nothing here runs, and none of this bundle's bytes are even
  * fetched, until then (docs/15-frontend-and-widget.md).
  */
+
+// Baked in at build time by esbuild's `define` (apps/widget/scripts/build.mjs),
+// the same way loader.ts gets them — NOT taken from the loader's `init`
+// postMessage. The `init` payload crosses an origin boundary that legitimately
+// varies per host site, so it cannot be authenticated; treating apiUrl/wsUrl as
+// data from that channel would let any script on the host page redirect this
+// panel's widget token to an attacker-controlled endpoint.
+declare const WIDGET_API_URL: string;
+declare const WIDGET_WS_URL: string;
 
 type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -39,6 +51,8 @@ interface State {
   connection: 'connecting' | 'online' | 'offline';
   sessionError: string | null;
   agentTyping: boolean;
+  agentOnline: boolean;
+  agentLastReadSequence: number;
   isOpen: boolean;
 }
 
@@ -51,6 +65,8 @@ const state: State = {
   connection: 'connecting',
   sessionError: null,
   agentTyping: false,
+  agentOnline: false,
+  agentLastReadSequence: 0,
   isOpen: true,
 };
 
@@ -70,9 +86,22 @@ let suggestionsListEl: HTMLUListElement | null = null;
 let suggestDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let suggestRequestSeq = 0;
 
+// Typing is fire-and-forget: start per burst, stop ~2s after the last
+// keystroke (or immediately on send / empty). Matches the dashboard composer.
+// The server's typing key TTL (REALTIME.typingTtlMs) is only refreshed when a
+// 'typing:start' actually arrives, so a single start at the top of a long
+// continuous burst is not enough — without a periodic re-emit, the receiver's
+// indicator would silently expire and disappear mid-burst even though this
+// side never stopped typing.
+let customerTyping = false;
+let customerTypingStopTimer: ReturnType<typeof setTimeout> | undefined;
+let customerTypingRefreshTimer: ReturnType<typeof setInterval> | undefined;
+let agentTypingExpiry: ReturnType<typeof setTimeout> | undefined;
+let agentPresenceExpiry: ReturnType<typeof setTimeout> | undefined;
+
 function apiConfig() {
   if (!state.config) throw new Error('panel used before init');
-  return { apiUrl: state.config.apiUrl, getToken: () => loadToken(state.config!.widgetKey) };
+  return { apiUrl: WIDGET_API_URL, getToken: () => loadToken(state.config!.widgetKey) };
 }
 
 function postToLoader(message: { type: string } & Record<string, unknown>): void {
@@ -110,6 +139,7 @@ async function bootstrap(config: InitMessage): Promise<void> {
   const latest = session.conversations[0];
   if (latest) {
     state.conversationId = latest.id;
+    state.agentLastReadSequence = latest.agentLastReadSequence;
     try {
       const page = await widgetFetch<{ items: WidgetMessageDto[] }>(
         apiConfig(),
@@ -135,6 +165,35 @@ function toDisplayMessage(m: WidgetMessageDto | MessageNewPayload): DisplayMessa
   };
 }
 
+/**
+ * HTTP catch-up when `conversation:sync` is truncated past REALTIME.syncMessageCap.
+ * Walks cursor pages so a long absence is not silently missing the middle.
+ */
+async function refetchHistory(conversationId: string): Promise<void> {
+  try {
+    const collected: WidgetMessageDto[] = [];
+    let cursor: string | null = null;
+    do {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (cursor) qs.set('cursor', cursor);
+      const page = await widgetFetch<{ items: WidgetMessageDto[]; nextCursor: string | null }>(
+        apiConfig(),
+        `/api/v1/widget/conversations/${conversationId}/messages?${qs.toString()}`,
+      );
+      collected.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    const byId = new Map(state.messages.map((m) => [m.id, m]));
+    for (const m of collected) byId.set(m.id, toDisplayMessage(m));
+    state.messages = [...byId.values()].sort((a, b) => a.sequence - b.sequence);
+    render();
+    markRead();
+  } catch {
+    // Keep whatever we already have; the next reconnect will try again.
+  }
+}
+
 // ─── Socket ─────────────────────────────────────────────────────────────────
 
 function connectSocket(): void {
@@ -142,7 +201,7 @@ function connectSocket(): void {
   const token = loadToken(state.config.widgetKey);
   if (!token) return;
 
-  socket = io(state.config.wsUrl, {
+  socket = io(WIDGET_WS_URL, {
     auth: {
       widgetToken: token,
       // The socket connection, like this panel's own fetches, originates from
@@ -164,10 +223,7 @@ function connectSocket(): void {
 
   socket.on('connect', () => {
     state.connection = 'online';
-    if (state.conversationId) {
-      const lastSequence = state.messages.at(-1)?.sequence ?? 0;
-      socket!.emit('conversation:subscribe', { conversationId: state.conversationId, lastSequence });
-    }
+    if (state.conversationId) subscribeToConversation();
     void flushOutbox();
     render();
   });
@@ -185,33 +241,108 @@ function connectSocket(): void {
   socket.on('message:new', (payload: MessageNewPayload) => {
     if (payload.conversationId !== state.conversationId) return;
     if (state.messages.some((m) => m.id === payload.messageId)) return;
-    state.messages.push(toDisplayMessage(payload));
+    insertMessageInOrder(toDisplayMessage(payload));
     render();
     markRead();
   });
 
-  socket.on('typing:start', (p: TypingPayload) => {
-    if (p.conversationId === state.conversationId && p.participantType === 'AGENT') {
-      state.agentTyping = true;
+  socket.on('conversation:sync', (p: ConversationSyncPayload) => {
+    if (p.conversationId !== state.conversationId) return;
+    if (p.truncated) {
+      void refetchHistory(p.conversationId);
+      return;
+    }
+    let added = false;
+    for (const m of p.messages) {
+      if (state.messages.some((x) => x.id === m.messageId)) continue;
+      state.messages.push(toDisplayMessage(m));
+      added = true;
+    }
+    if (added) {
+      state.messages.sort((a, b) => a.sequence - b.sequence);
       render();
+      markRead();
     }
   });
-  socket.on('typing:stop', (p: TypingPayload) => {
-    if (p.conversationId === state.conversationId && p.participantType === 'AGENT') {
+
+  socket.on('typing:start', (p: TypingPayload) => {
+    if (p.conversationId !== state.conversationId || p.participantType !== 'AGENT') return;
+    state.agentTyping = true;
+    clearTimeout(agentTypingExpiry);
+    agentTypingExpiry = setTimeout(() => {
       state.agentTyping = false;
       render();
+    }, REALTIME.typingTtlMs + 500);
+    render();
+  });
+  socket.on('typing:stop', (p: TypingPayload) => {
+    if (p.conversationId !== state.conversationId || p.participantType !== 'AGENT') return;
+    clearTimeout(agentTypingExpiry);
+    state.agentTyping = false;
+    render();
+  });
+  socket.on('message:read', (p: MessageReadPayload) => {
+    if (p.conversationId !== state.conversationId || p.readerType !== 'AGENT') return;
+    if (p.lastReadSequence > state.agentLastReadSequence) {
+      state.agentLastReadSequence = p.lastReadSequence;
+      render();
     }
   });
-  // presence:update is received but has no visual treatment in this panel —
-  // the customer already knows whether THEY are connected (the banner covers
-  // that); an agent's presence is a dashboard-side affordance.
-  socket.on('presence:update', (_p: PresenceUpdatePayload) => {});
+  socket.on('presence:update', (p: PresenceUpdatePayload) => {
+    if (p.conversationId !== state.conversationId || p.participantType !== 'AGENT') return;
+    state.agentOnline = p.status === 'ONLINE';
+    clearTimeout(agentPresenceExpiry);
+    if (p.status === 'ONLINE') {
+      agentPresenceExpiry = setTimeout(() => {
+        state.agentOnline = false;
+        render();
+      }, REALTIME.presenceTtlMs + 5_000);
+    }
+    render();
+  });
+}
+
+function subscribeToConversation(): void {
+  if (!socket?.connected || !state.conversationId) return;
+  const lastSequence = state.messages.at(-1)?.sequence ?? 0;
+  socket.emit('conversation:subscribe', { conversationId: state.conversationId, lastSequence }, (ack) => {
+    if (ack.ok) markRead();
+  });
 }
 
 function markRead(): void {
   if (!socket?.connected || !state.conversationId || !state.isOpen) return;
-  const lastSequence = state.messages.at(-1)?.sequence ?? 0;
-  if (lastSequence > 0) socket.emit('message:read', { conversationId: state.conversationId, lastSequence });
+  const lastReadSequence = state.messages.at(-1)?.sequence ?? 0;
+  if (lastReadSequence > 0) {
+    socket.emit('message:read', { conversationId: state.conversationId, lastReadSequence });
+  }
+}
+
+function stopCustomerTyping(): void {
+  clearTimeout(customerTypingStopTimer);
+  clearInterval(customerTypingRefreshTimer);
+  if (!customerTyping || !state.conversationId) return;
+  customerTyping = false;
+  socket?.emit('typing:stop', { conversationId: state.conversationId });
+}
+
+function onComposerTyping(value: string): void {
+  if (!socket?.connected || !state.conversationId) return;
+  if (!value.trim()) {
+    stopCustomerTyping();
+    return;
+  }
+  if (!customerTyping) {
+    customerTyping = true;
+    socket.emit('typing:start', { conversationId: state.conversationId });
+    // Re-send well inside the server's TTL so a continuous burst never lets
+    // the receiver's indicator expire before this side actually stops.
+    customerTypingRefreshTimer = setInterval(() => {
+      if (state.conversationId) socket?.emit('typing:start', { conversationId: state.conversationId });
+    }, Math.floor(REALTIME.typingTtlMs * 0.6));
+  }
+  clearTimeout(customerTypingStopTimer);
+  customerTypingStopTimer = setTimeout(() => stopCustomerTyping(), 2_000);
 }
 
 // ─── Sending, with the offline queue ────────────────────────────────────────
@@ -243,7 +374,9 @@ async function sendDraft(draft: Draft): Promise<void> {
       );
       state.conversationId = message.conversationId;
       applyDelivered(draft, toDisplayMessage(message));
-      socket?.emit('conversation:subscribe', { conversationId: message.conversationId, lastSequence: message.sequence });
+      socket?.emit('conversation:subscribe', { conversationId: message.conversationId, lastSequence: message.sequence }, (ack) => {
+        if (ack.ok) markRead();
+      });
     } else if (socket?.connected) {
       const ack = await new Promise<
         { ok: true; data: { messageId: string; sequence: number; createdAt: string } } | { ok: false; message: string }
@@ -277,10 +410,23 @@ async function sendDraft(draft: Draft): Promise<void> {
   }
 }
 
+/**
+ * Inserts a message keeping `state.messages` sorted by `sequence`. Delivery
+ * order isn't guaranteed once the Redis adapter fans events out across
+ * multiple API instances (docs/06-realtime.md), so `markRead`/`subscribeToConversation`
+ * — which both read `state.messages.at(-1)?.sequence` — need the array to stay
+ * sorted rather than just append-ordered.
+ */
+function insertMessageInOrder(message: DisplayMessage): void {
+  const index = state.messages.findIndex((m) => m.sequence > message.sequence);
+  if (index === -1) state.messages.push(message);
+  else state.messages.splice(index, 0, message);
+}
+
 function applyDelivered(draft: Draft, message: DisplayMessage): void {
   state.outbox = state.outbox.filter((d) => d.clientMessageId !== draft.clientMessageId);
   persistOutbox();
-  if (!state.messages.some((m) => m.id === message.id)) state.messages.push(message);
+  if (!state.messages.some((m) => m.id === message.id)) insertMessageInOrder(message);
   render();
 }
 
@@ -293,6 +439,7 @@ async function flushOutbox(): Promise<void> {
 function submitMessage(text: string): void {
   const bodyText = text.trim();
   if (!bodyText || !state.config) return;
+  stopCustomerTyping();
   const draft: Draft = {
     clientMessageId: `cm_${crypto.randomUUID()}`,
     bodyText,
@@ -323,7 +470,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 function renderHeader(): HTMLElement {
   const header = el('header', 'flex items-center justify-between border-b border-gray-200 px-4 py-3');
-  header.appendChild(el('span', 'font-medium text-gray-900', 'Chat with us'));
+  const title = el('div', 'flex flex-col');
+  title.appendChild(el('span', 'font-medium text-gray-900', 'Chat with us'));
+  title.appendChild(
+    el('span', `text-xs ${state.agentOnline ? 'text-green-600' : 'text-gray-400'}`, state.agentOnline ? 'Online' : 'Offline'),
+  );
+  header.appendChild(title);
   const closeBtn = el('button', 'text-gray-400 hover:text-gray-600', '✕');
   closeBtn.type = 'button';
   closeBtn.setAttribute('aria-label', 'Close chat');
@@ -357,6 +509,7 @@ function statusLabel(status: Draft['status'] | undefined): string | null {
 
 function renderMessageList(): HTMLElement {
   const list = el('div', 'flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2');
+  list.id = 'gc-messages';
   // Announces new messages without stealing focus (docs/15-frontend-and-widget.md).
   list.setAttribute('aria-live', 'polite');
 
@@ -367,14 +520,26 @@ function renderMessageList(): HTMLElement {
   for (const m of state.messages) {
     const fromCustomer = m.senderType === 'CUSTOMER';
     const row = el('div', `flex ${fromCustomer ? 'justify-end' : 'justify-start'}`);
+    const wrap = el('div', `flex max-w-[80%] flex-col gap-0.5 ${fromCustomer ? 'items-end' : 'items-start'}`);
     const bubble = el(
       'div',
-      `max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+      `rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
         fromCustomer ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
       }`,
       m.bodyText,
     );
-    row.appendChild(bubble);
+    wrap.appendChild(bubble);
+    if (fromCustomer) {
+      const read = m.sequence > 0 && m.sequence <= state.agentLastReadSequence;
+      const ticks = el(
+        'span',
+        `gc-ticks ${read ? 'gc-ticks--read' : 'gc-ticks--sent'}`,
+        read ? '✓✓' : '✓',
+      );
+      ticks.setAttribute('aria-label', read ? 'Read' : 'Sent');
+      wrap.appendChild(ticks);
+    }
+    row.appendChild(wrap);
     list.appendChild(row);
   }
 
@@ -407,7 +572,13 @@ function renderMessageList(): HTMLElement {
 
 function renderTypingIndicator(): HTMLElement | null {
   if (!state.agentTyping) return null;
-  return el('p', 'px-4 pb-1 text-xs text-gray-400', 'Typing…');
+  const row = el('div', 'flex justify-start px-4 pb-2');
+  const bubble = el('div', 'gc-typing rounded-2xl bg-gray-100 px-3 py-2');
+  bubble.setAttribute('aria-label', 'Agent is typing');
+  bubble.setAttribute('role', 'status');
+  for (let i = 0; i < 3; i++) bubble.appendChild(el('span'));
+  row.appendChild(bubble);
+  return row;
 }
 
 /** Clears any pending debounce and hides the dropdown. */
@@ -496,6 +667,7 @@ function renderComposer(): HTMLElement {
   });
   textarea.addEventListener('input', () => {
     const query = textarea.value.trim();
+    onComposerTyping(textarea.value);
     if (suggestDebounceTimer) clearTimeout(suggestDebounceTimer);
     if (!query) {
       clearSuggestions();
@@ -530,6 +702,14 @@ function renderComposer(): HTMLElement {
 function render(): void {
   const app = document.getElementById('app');
   if (!app) return;
+  const hadFocus = document.activeElement === composerEl;
+  const draft = composerEl
+    ? { value: composerEl.value, start: composerEl.selectionStart, end: composerEl.selectionEnd }
+    : null;
+  const prevList = document.getElementById('gc-messages');
+  const scrollTop = prevList?.scrollTop ?? null;
+  const nearBottom = prevList ? prevList.scrollHeight - prevList.scrollTop - prevList.clientHeight < 48 : true;
+
   app.innerHTML = '';
   app.className = 'gc-app flex h-full flex-col bg-white';
 
@@ -540,6 +720,17 @@ function render(): void {
   const typing = renderTypingIndicator();
   if (typing) app.appendChild(typing);
   app.appendChild(renderComposer());
+
+  if (draft && composerEl) {
+    composerEl.value = draft.value;
+    composerEl.setSelectionRange(draft.start, draft.end);
+    if (hadFocus) composerEl.focus();
+  }
+  const list = document.getElementById('gc-messages');
+  if (list) {
+    if (nearBottom) list.scrollTop = list.scrollHeight;
+    else if (scrollTop != null) list.scrollTop = scrollTop;
+  }
 
   const unread = state.isOpen ? 0 : state.messages.filter((m) => m.senderType === 'AGENT').length;
   postToLoader({ type: 'unread', count: unread });
@@ -556,15 +747,17 @@ window.addEventListener('message', (event: MessageEvent) => {
   // loader.ts, DOES check origin strictly, because the panel's origin is fixed
   // — always this same CDN-served bundle.) The namespace check in
   // isWidgetMessage is what filters out unrelated postMessage traffic a host
-  // page might otherwise generate; nothing security-relevant crosses this
-  // channel; that boundary is enforced server-side by the widget token and the
-  // origin allowlist checked at session creation.
+  // page might otherwise generate. Because this channel can't be authenticated,
+  // apiUrl/wsUrl are never read from it — see the WIDGET_API_URL/WIDGET_WS_URL
+  // constants above — so the worst a forged `init` message can do is feed this
+  // panel a bogus session/hostPageUrl, not redirect its network traffic.
   switch (event.data.type) {
     case 'init':
       void bootstrap(event.data as InitMessage);
       break;
     case 'open':
       state.isOpen = true;
+      markRead();
       render();
       composerEl?.focus();
       break;

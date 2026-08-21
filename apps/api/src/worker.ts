@@ -5,8 +5,9 @@ import { logger } from './lib/logger';
 import { createQueueConnection } from './lib/redis';
 import { TIMEOUTS } from '@gigachad/shared';
 import { createEmailSendWorker, onEmailSendFailed } from './modules/email/jobs/emailSendJob';
-import { createAiSummaryWorker } from './modules/ai/jobs/summaryJob';
+import { createAiSummaryWorker, onAiSummaryFailed } from './modules/ai/jobs/summaryJob';
 import type { EmailSendJobData } from './lib/email/queue';
+import { attachRealtimeEmitter } from './realtime/io';
 
 /**
  * Worker entry point. Runs from the same image as the API but as its own process,
@@ -19,6 +20,7 @@ import type { EmailSendJobData } from './lib/email/queue';
 /** A worker gets a longer statement timeout than a request handler. */
 const db = createPrismaClient({ statementTimeoutMs: TIMEOUTS.dbStatementWorkerMs });
 const connection = createQueueConnection();
+attachRealtimeEmitter();
 
 // ─── Email send worker ────────────────────────────────────────────────────────
 
@@ -26,7 +28,14 @@ const emailWorker = createEmailSendWorker(db, connection);
 
 emailWorker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, err }, 'email send job failed');
-  void onEmailSendFailed(db, job as { data: EmailSendJobData } | undefined);
+  // BullMQ emits 'failed' after every attempt, not just the last one — without
+  // this guard a single transient SMTP/Brevo hiccup marks the message FAILED
+  // immediately, even though a retry moments later is likely to succeed,
+  // flickering the delivery status and risking an agent duplicating the send.
+  const attempts = job?.opts.attempts ?? 3;
+  if (job && job.attemptsMade >= attempts) {
+    void onEmailSendFailed(db, job as { data: EmailSendJobData } | undefined);
+  }
 });
 
 emailWorker.on('completed', (job) => {
@@ -39,6 +48,10 @@ const aiWorker = createAiSummaryWorker(db, connection);
 
 aiWorker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, err }, 'ai summary job failed');
+  const attempts = job?.opts.attempts ?? 3;
+  if (job && job.attemptsMade >= attempts) {
+    void onAiSummaryFailed(db, job);
+  }
 });
 
 aiWorker.on('completed', (job) => {

@@ -28,8 +28,6 @@ export interface InitMessage {
   widgetKey: string;
   hostPageUrl: string;
   locale: string;
-  apiUrl: string;
-  wsUrl: string;
   session: WidgetSessionResult | null;
   sessionError?: string;
 }
@@ -43,6 +41,7 @@ export interface WidgetSessionResult {
     subject: string | null;
     lastMessageAt: string;
     customerLastReadSequence: number;
+    agentLastReadSequence: number;
   }>;
 }
 

@@ -41,10 +41,17 @@ import type { IoServer } from './types';
 export function attachSocketServer(httpServer: HttpServer): IoServer {
   const io: IoServer = new Server(httpServer, {
     cors: { origin: true, credentials: true },
+    // Idle proxies (Caddy) otherwise look like a dead peer and flap presence.
+    pingInterval: 20_000,
+    pingTimeout: 60_000,
   });
 
   const { pubClient, subClient } = createAdapterConnections();
   io.adapter(createAdapter(pubClient, subClient));
+  io.engine.on('close', () => {
+    void pubClient.quit();
+    void subClient.quit();
+  });
   logger.info('socket.io redis adapter attached');
 
   io.use(socketAuthMiddleware);
@@ -54,5 +61,24 @@ export function attachSocketServer(httpServer: HttpServer): IoServer {
   // broadcast without importing the server instance directly — see emit.ts.
   setIoServer(io);
 
+  return io;
+}
+
+/**
+ * Socket.IO server used by the worker process to publish into the same Redis
+ * adapter the API listens on. It never accepts connections — `ioRef` in this
+ * process is otherwise null, so `emitSummaryUpdated` / `emitMessageUpdated`
+ * from a job would no-op and the dashboard would sit on "Generating…" forever.
+ */
+export function attachRealtimeEmitter(): IoServer {
+  const io: IoServer = new Server();
+  const { pubClient, subClient } = createAdapterConnections();
+  io.adapter(createAdapter(pubClient, subClient));
+  io.engine.on('close', () => {
+    void pubClient.quit();
+    void subClient.quit();
+  });
+  setIoServer(io);
+  logger.info('socket.io worker emitter attached');
   return io;
 }

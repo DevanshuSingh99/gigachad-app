@@ -1,21 +1,18 @@
 import { conversationRoom, typingInput, type TypingPayload } from '@gigachad/shared';
 
+import { logger } from '../../lib/logger';
 import { consume } from '../../lib/rateLimit';
 import { clearTyping, markTyping } from '../presence';
-import type { IoSocket } from '../types';
+import type { EnsureSubscribed, IoSocket } from '../types';
 
 /**
  * `typing:start` / `typing:stop`. Fire-and-forget events per the shared contract
  * (no ack) — a dropped typing indicator is not worth retrying.
  *
- * Authorization piggybacks on room membership rather than re-running the scoped
- * lookup: `conversation:subscribe` already proved this socket may see the
- * conversation before it was allowed to join that room, so "is this socket in
- * the room" is a cheap, correct proxy for "is this socket authorized" — a socket
- * that never subscribed silently has its typing events dropped instead of
- * broadcasting for a conversation it was never let into.
+ * If the client has not finished `conversation:subscribe` yet, we join first so
+ * a keystroke right after connect is not silently dropped on the room check.
  */
-export function registerTypingHandlers(socket: IoSocket): void {
+export function registerTypingHandlers(socket: IoSocket, options: { ensureSubscribed: EnsureSubscribed }): void {
   const participant = () => {
     const p = socket.data.principal;
     return p.actorType === 'AGENT'
@@ -23,34 +20,44 @@ export function registerTypingHandlers(socket: IoSocket): void {
       : { id: p.contactId, type: 'CUSTOMER' as const };
   };
 
+  // No ack on either event (fire-and-forget per the shared contract), so the
+  // try/catch below exists only to attribute a failure to `typing:start`/
+  // `typing:stop` in the logs rather than surfacing as a bare unhandled
+  // rejection — there is no client waiting on a response to unblock.
   socket.on('typing:start', async (raw) => {
-    const parsed = typingInput.safeParse(raw);
-    if (!parsed.success) return;
-    const { conversationId } = parsed.data;
-    const { workspaceId } = socket.data.principal;
-    const room = conversationRoom(workspaceId, conversationId);
-    if (!socket.rooms.has(room)) return;
+    try {
+      const parsed = typingInput.safeParse(raw);
+      if (!parsed.success) return;
+      const { conversationId } = parsed.data;
+      if (!(await options.ensureSubscribed(conversationId))) return;
 
-    const { allowed } = await consume('socketTyping', socket.id);
-    if (!allowed) return;
+      const { allowed } = await consume('socketTyping', socket.id);
+      if (!allowed) return;
 
-    const { id, type } = participant();
-    await markTyping(workspaceId, conversationId, id);
-    const payload: TypingPayload = { conversationId, participantId: id, participantType: type };
-    socket.to(room).emit('typing:start', payload);
+      const { workspaceId } = socket.data.principal;
+      const { id, type } = participant();
+      await markTyping(workspaceId, conversationId, id, type);
+      const payload: TypingPayload = { conversationId, participantId: id, participantType: type };
+      socket.to(conversationRoom(workspaceId, conversationId)).emit('typing:start', payload);
+    } catch (err) {
+      logger.error({ err }, 'typing:start failed');
+    }
   });
 
   socket.on('typing:stop', async (raw) => {
-    const parsed = typingInput.safeParse(raw);
-    if (!parsed.success) return;
-    const { conversationId } = parsed.data;
-    const { workspaceId } = socket.data.principal;
-    const room = conversationRoom(workspaceId, conversationId);
-    if (!socket.rooms.has(room)) return;
+    try {
+      const parsed = typingInput.safeParse(raw);
+      if (!parsed.success) return;
+      const { conversationId } = parsed.data;
+      if (!(await options.ensureSubscribed(conversationId))) return;
 
-    const { id, type } = participant();
-    await clearTyping(workspaceId, conversationId, id);
-    const payload: TypingPayload = { conversationId, participantId: id, participantType: type };
-    socket.to(room).emit('typing:stop', payload);
+      const { workspaceId } = socket.data.principal;
+      const { id, type } = participant();
+      await clearTyping(workspaceId, conversationId, id);
+      const payload: TypingPayload = { conversationId, participantId: id, participantType: type };
+      socket.to(conversationRoom(workspaceId, conversationId)).emit('typing:stop', payload);
+    } catch (err) {
+      logger.error({ err }, 'typing:stop failed');
+    }
   });
 }
