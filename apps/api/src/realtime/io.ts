@@ -1,4 +1,4 @@
-import type { Server as HttpServer } from 'node:http';
+import { createServer, type Server as HttpServer } from 'node:http';
 
 import { createAdapter } from '@socket.io/redis-adapter';
 import { Server } from 'socket.io';
@@ -66,12 +66,14 @@ export function attachSocketServer(httpServer: HttpServer): IoServer {
 
 /**
  * Socket.IO server used by the worker process to publish into the same Redis
- * adapter the API listens on. It never accepts connections — `ioRef` in this
- * process is otherwise null, so `emitSummaryUpdated` / `emitMessageUpdated`
- * from a job would no-op and the dashboard would sit on "Generating…" forever.
+ * adapter the API listens on. Bound to an HTTP server that never `.listen()`s
+ * — `new Server()` with no argument leaves `io.engine` undefined, which
+ * crashed the worker on the adapter-close hook. `ioRef` in this process is
+ * otherwise null, so `emitSummaryUpdated` / `emitMessageUpdated` from a job
+ * would no-op and the dashboard would sit on "Generating…" forever.
  */
 export function attachRealtimeEmitter(): IoServer {
-  const io: IoServer = new Server();
+  const io: IoServer = new Server(createServer());
   const { pubClient, subClient } = createAdapterConnections();
   io.adapter(createAdapter(pubClient, subClient));
   io.engine.on('close', () => {
