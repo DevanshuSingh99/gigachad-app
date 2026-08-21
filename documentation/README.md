@@ -21,7 +21,7 @@ Start here if you are running or extending the repo.
 | [11-security.md](11-security.md) | Sessions, CSRF, sanitization, isolation |
 | [12-deploy.md](12-deploy.md) | VM + Caddy + Cloudflare Pages |
 | [13-testing.md](13-testing.md) | Automated suite and how to run it |
-| [14-choices.md](14-choices.md) | What we optimized for and what we deferred |
+| [14-choices.md](14-choices.md) | Trade-offs: prioritize, defer, how we record them (README has the evaluator summary) |
 | [15-analytics.md](15-analytics.md) | Admin-only metrics: response times, resolution, agent performance |
 
 Source of truth for types and limits is `packages/shared`. Source of truth for tables is `apps/api/prisma/schema.prisma`.

@@ -1,207 +1,233 @@
 # Gigachad
 
-A multi-tenant customer communication platform: embeddable live chat, an email channel that threads correctly, a unified inbox, a knowledge base with public search, AI issue summarization, and customer-owned custom domains with real HTTPS.
+A multi-tenant customer communication platform: embeddable live chat, an email channel that threads correctly, a unified inbox, a knowledge base with public search, AI issue summarization, and customer-owned custom domains.
 
-Built for the SuperProfile "Build Intercom. From Scratch." assignment.
+Built for the SuperProfile “Build Intercom. From Scratch.” assignment.
 
-> Placeholders below marked `TODO` are filled in during the submission step.
+## Submission
 
-## Live links
+These are the four things to review. Sign up yourself — nothing is pre-seeded.
 
-| What | URL |
-|---|---|
-| Dashboard | `TODO` |
-| Widget demo page | `TODO` |
-| Public knowledge base | `TODO` |
-| API | `TODO — api.<domain>` |
-| Support email (routes into the unified inbox) | `TODO — <workspace-slug>@inbound.TODO` |
+### 1. Live product (dashboard)
 
-Evaluators can sign up directly on the dashboard; no invitation or seed data is required. A fresh workspace starts empty.
+**https://gigachad-app.devjs.in**
 
-## What's built
+Create an account at [/signup](https://gigachad-app.devjs.in/signup). You become Admin of a new workspace. From there: inbox, team invites, knowledge base, custom domains (CNAME + TXT, then Caddy serves the help site over HTTPS), embed tokens, and AI summaries (on conversations with 6+ messages, when the OpenAI key is configured).
 
-| Requirement | Status | Notes |
-|---|---|---|
-| M1 Auth and team management | `TODO` | Email/password, sessions, workspace creation, invitations, Admin/Agent roles, conversation assignment |
-| M2 Live chat widget | `TODO` | One script tag, iframe-isolated panel, realtime messaging, typing, presence, read receipts, persisted history |
-| M3 Email channel | `TODO` | Brevo inbound parsing, `Message-ID`/`In-Reply-To`/`References` threading, dashboard replies |
-| M4 Unified inbox | `TODO` | Chat and email in one list; channel/assignee/status filters; assign, snooze, resolve |
-| M5 Knowledge base | `TODO` | Rich text with a sanitizing allowlist, categories, publish lifecycle, public search, widget suggestions |
-| M6 AI summarization | `TODO` | Agent-triggered summaries on conversations of 6+ messages; goal, tried, status; queued/ready/stale/error states |
-| M7 Custom domains | `TODO` | DNS verification plus Caddy on-demand TLS with Let's Encrypt |
+API (health): [https://gigachad-api.devjs.in/health/ready](https://gigachad-api.devjs.in/health/ready)
 
-## What's skipped
+Public knowledge base, after you publish an article: `https://gigachad-kb.devjs.in/api/v1/public/<your-workspace-slug>/kb`
 
-Deliberate omissions, with reasoning in [docs/11-tradeoffs.md](docs/11-tradeoffs.md):
+### 2. Live chat bubble (separate origin)
 
-- **All stretch features** — AI auto-reply drafts, canned responses, contact timeline, SLA tracking, webhooks/public API, analytics dashboard.
-- **Attachments** on both channels. Canonical plain text and sanitized HTML only.
-- **Automated database backups.** Intentionally absent on this single-VM deployment. Unacceptable for real production and called out as such.
-- **Broad automated test coverage.** Roughly 15 targeted tests cover tenant isolation, socket isolation, widget token scope, webhook replay, sanitization, and deduplication. Everything else is verified manually.
-- **Per-agent read state.** Read position is per conversation, per side.
-- **Hard delete for KB articles.** Unpublish is the removal path.
-- **Cross-device chat history recovery.** Anonymous visitor identity is scoped to browser storage.
+**https://gigachad-demo.devjs.in**
+
+This is a standalone page, not the dashboard. The widget is installed there on purpose so you can send a message from a real customer origin and watch it arrive in the inbox over Socket.IO.
+
+To land those messages in **the workspace you just created**:
+
+1. In the dashboard, open **Embed**.
+2. Create a token whose allowed origin is exactly `https://gigachad-demo.devjs.in` (no trailing slash).
+3. Open `https://gigachad-demo.devjs.in/?key=<the-wk_embed_token>`.
+4. Send a message. It should appear in **Inbox** without a refresh.
+
+Omitting `?key=` uses a default token for a pre-existing workspace, which will not show up in your new account.
+
+### 3. Email inbox
+
+Production inbound domain: **`inbound.devjs.in`** (MX → Brevo / Sendinblue).
+
+Mailbox for a workspace:
+
+```text
+<workspace-slug>@inbound.devjs.in
+```
+
+The slug is the workspace name you typed at signup, lowercased and hyphenated. The exact address is shown in the dashboard sidebar and on **Team**.
+
+What to try:
+
+1. Mail that address from any mailbox.
+2. Confirm a new **EMAIL** conversation in Inbox (HTML is sanitized; the canonical body is plain text).
+3. Reply from the dashboard, then reply again from your mail client — the second inbound should thread into the same conversation (`In-Reply-To` / `References`, not subject matching).
+
+### 4. GitHub repository
+
+**https://github.com/DevanshuSingh99/gigachad-app**
+
+Commit history is incremental (phases of the product, not a single dump). This README is the evaluator-facing overview; deeper notes live in [`documentation/`](documentation/README.md).
+
+---
 
 ## Architecture
 
 A modular monolith backend with a statically hosted frontend.
 
-Everything that touches the database is one Node process on an Oracle VM: REST API, Socket.IO, and the server-rendered public knowledge base, with a BullMQ worker alongside it from the same image. PostgreSQL is authoritative; Redis backs queues, rate limits, and ephemeral presence. All of it runs in Docker Compose behind Caddy and comes up with one command.
+Everything that touches the database is one Node process: REST API, Socket.IO, and the server-rendered public knowledge base, plus a BullMQ worker from the same image. PostgreSQL is authoritative; Redis backs queues, rate limits, and ephemeral presence.
 
-The dashboard, demo page, and widget assets are a static build on Cloudflare Pages. They hold no secrets and reach the backend only through the public API.
+Caddy terminates TLS on the VM for `gigachad-api.devjs.in`, `gigachad-kb.devjs.in`, and **verified customer knowledge-base hostnames**. On-demand Let’s Encrypt certificates are issued only when Caddy’s `ask` call (`GET /internal/tls/ask`) finds a `custom_domains` row with status `VERIFIED`. The dashboard, demo page, and widget assets are a static Cloudflare Pages build. They hold no secrets and talk only to the public API.
 
 ```
-        ┌──────────── Cloudflare Pages ─────────┐
-Agent ─▶│ app.<domain>   dashboard + /widget    │
-Site  ─▶│ demo.<domain>  demo page (own origin) │
-        └──────────────┬────────────────────────┘
-                       │ HTTPS + WSS, credentialed CORS
-        ┌──────────────▼───── Oracle VM / Docker ┐
-Visitor▶│ Caddy ─┬─ api.<domain>   API + Socket.IO│
-custom ▶│        ├─ kb.<domain>    public KB (SSR)│
-domain  │        └─ on-demand TLS (Let's Encrypt) │
-        │  worker · postgres · redis              │
-        └─────────────────────────────────────────┘
+        ┌──────────── Cloudflare Pages ─────────────┐
+Agent ─▶│ gigachad-app.devjs.in   dashboard + widget│
+Site  ─▶│ gigachad-demo.devjs.in  demo (own origin) │
+        └──────────────────┬────────────────────────┘
+                           │ HTTPS + WSS, credentialed CORS
+        ┌──────────────────▼──── Oracle VM / Docker ─┐
+Visitor▶│ Caddy ─┬─ gigachad-api.devjs.in  API + WS │
+custom ▶│        ├─ gigachad-kb.devjs.in   public KB│
+domain  │        └─ on-demand TLS (Let’s Encrypt)   │
+        │  worker · postgres · redis                │
+        └───────────────────────────────────────────┘
 ```
 
-The split is drawn where it costs nothing. The dashboard is an authenticated, per-tenant SPA that gains nothing from server rendering, so shipping it as static files to a CDN removes a Next.js process from a 1 vCPU box. The backend keeps its module boundaries and transactional consistency, which is where the requirements are actually hard — no service-to-service calls, no distributed transactions, no duplicated auth logic.
+The split is drawn where it costs nothing. The dashboard is an authenticated SPA that gains nothing from server rendering, so shipping it to a CDN removes a Next.js process from a 1 vCPU box. The backend keeps module boundaries and transactional consistency — no service-to-service calls, no distributed transactions, no duplicated auth.
 
-The public KB deliberately did **not** move to Pages: M7 requires resolving an arbitrary customer hostname from the `Host` header and issuing a certificate for it on demand, which is Caddy's job, and server rendering gives crawlers real HTML for articles created at runtime.
+The public KB stays on the API: custom-domain help sites need the `Host` header and a certificate at the origin, and crawlers need HTML for articles created at runtime. An admin adds a hostname, proves DNS (CNAME + TXT), clicks Verify, then Caddy serves that host over HTTPS. Unverified names never get a certificate. [documentation/10-knowledge-base.md](documentation/10-knowledge-base.md), [documentation/12-deploy.md](documentation/12-deploy.md).
 
-Decisions worth reading about:
-
-- **Modular monolith backend, split static frontend** — one process for everything transactional, a CDN for everything that is just a client. [docs/11-tradeoffs.md](docs/11-tradeoffs.md)
-- **Dashboard on a subdomain of the API's apex domain** — makes dashboard-to-API requests same-site, so the session stays an `HttpOnly` cookie rather than a bearer token any XSS could read. On a `*.pages.dev` URL the cookie would be third-party and Safari would drop it. [docs/10-deployment.md](docs/10-deployment.md)
-- **One command to deploy the backend** — `docker compose up -d --build`, with a one-shot migration service ordered by Compose so migrations never need a second step. [docs/10-deployment.md](docs/10-deployment.md)
-- **PostgreSQL for search too** — full-text for the public KB, `pg_trgm` for the widget's partial-word suggestions. No Elasticsearch. [docs/04-database.md](docs/04-database.md)
-- **Message ordering by allocated sequence** — the send transaction bumps a counter on the conversation row and uses the returned value, giving gapless per-conversation ordering and a natural reconnect cursor. [docs/04-database.md](docs/04-database.md)
-- **Three separate auth namespaces** — dashboard sessions, scoped widget tokens, provider signatures. No route accepts more than one. [docs/05-api.md](docs/05-api.md)
-- **Widget in an iframe** — CSS and script isolation in both directions, and any sanitizer gap executes in our frame rather than the customer's site. [docs/15-frontend-and-widget.md](docs/15-frontend-and-widget.md)
-- **Caddy on-demand TLS for custom domains** — real Let's Encrypt certificates for customer hostnames without a paid SaaS-TLS product, gated by an `ask` endpoint that only approves verified domains. [docs/11-tradeoffs.md](docs/11-tradeoffs.md)
-- **Agent-triggered AI summaries** — a deliberate deviation from generating on open, so cost tracks support load rather than inbox browsing; staleness is tracked durably so a summary is never shown as fresher than it is. [docs/11-tradeoffs.md](docs/11-tradeoffs.md)
-
-Build order, per-phase tasks, and acceptance gates: [docs/18-execution.md](docs/18-execution.md).
-
-Full documentation index: [docs/00-index.md](docs/00-index.md).
+Trade-offs (what we spent the week on, what we refused, and where that is written down): [Trade-off decisions](#trade-off-decisions). Detail: [documentation/14-choices.md](documentation/14-choices.md). Full index: [documentation/README.md](documentation/README.md).
 
 ## Tech stack
 
 | Area | Choice |
 |---|---|
 | Language | TypeScript |
-| Repo | npm workspaces monorepo (`apps/*`, `packages/shared`) |
-| Dashboard | Next.js static export, React, HeroUI (formerly NextUI) + Tailwind CSS |
-| Public KB | Eta templates rendered by the API, plain Tailwind |
-| API | Express + TypeScript, domain services, Zod validation |
+| Repo | npm workspaces (`apps/*`, `packages/shared`) |
+| Dashboard | Next.js static export, React, HeroUI + Tailwind CSS |
+| Public KB | Eta templates rendered by the API |
+| API | Express, domain services, Zod |
 | Database | PostgreSQL with Prisma, `pg_trgm` |
-| Client state | TanStack Query, invalidated by Socket.IO events |
-| Realtime | Socket.IO |
+| Client state | TanStack Query, invalidated by Socket.IO |
+| Realtime | Socket.IO (Redis adapter wired, single instance live) |
 | Queue | BullMQ on Redis |
-| Email | Brevo (inbound parsing + transactional send) |
+| Email | Brevo inbound parse + SMTP relay |
 | AI | OpenAI-compatible adapter |
-| Proxy / TLS | Caddy with on-demand TLS |
-| Backend deploy | Docker Compose on an Oracle VM, built on the VM, one command |
-| Frontend deploy | Cloudflare Pages, git push |
+| Proxy / TLS | Caddy (on-demand Let’s Encrypt for verified KB hosts) |
+| Backend deploy | Docker Compose on an Oracle VM, Caddy at the edge |
+| Frontend deploy | Cloudflare Pages on git push |
+
+## What's built vs skipped
+
+| Requirement | Status | Notes |
+|---|---|---|
+| M1 Auth and team | done | Email/password, sessions, workspace create, invites, Admin/Agent, assignment |
+| M2 Live chat widget | done | One script tag, iframe panel, realtime, typing, presence, receipts, history |
+| M3 Email channel | done | Inbound parse, RFC threading, dashboard replies |
+| M4 Unified inbox | done | Chat + email; filters; assign / snooze / resolve |
+| M5 Knowledge base | done | Sanitized rich text, categories, publish, public search, widget suggestions |
+| M6 AI summarization | done | Agent-triggered on 6+ messages; queued / ready / stale / error |
+| M7 Custom domains | done | DNS verification in the dashboard; Caddy issues HTTPS only for `VERIFIED` hosts |
+
+**Skipped on purpose** — stretch product (auto-replies, macros, SLA, analytics, partner API), attachments, backups, per-agent unread, hard-delete of articles, workspace deletion, recovering anonymous chat after storage is cleared. Why each is out: next section and [documentation/14-choices.md](documentation/14-choices.md).
+
+## Trade-off decisions
+
+The grading risk on this assignment is a silent tenant leak, a garbled thread, or a widget that only works in a screenshot. We spent the budget there and wrote the “no”s down so they read as choices, not unfinished tickets.
+
+### What we prioritized
+
+| Choice | Instead of | Why |
+|---|---|---|
+| One modular monolith (API + Socket.IO + public KB in one process, worker beside it) | Microservices per channel | Chat, email, and assignment share rows and locks. A sequence gap or a cross-tenant write is worse than an extra deploy unit. |
+| Static dashboard on Pages, SSR knowledge base on the API | Next.js for everything, or KB on the CDN | Agents are a logged-in SPA. Customer hostnames and crawler HTML need the `Host` header and a certificate at the origin — Caddy’s job. |
+| Allocated `sequence` on send | Order by `created_at` | Concurrent sends serialize on the conversation row. Reconnect is `WHERE sequence > n`, gapless. |
+| `HttpOnly` session cookie + Origin CSRF, dashboard on the API apex | Bearer token in JS | XSS must not equal account theft. `*.pages.dev` would make the cookie third-party; that URL is refused on purpose. |
+| Three auth namespaces (session, widget token, webhook signature) | One “auth header” | A widget token must never open the dashboard; a session must never call `/widget`. |
+| Widget in an iframe; sanitize HTML on write | Trust the host page / sanitize on read | Customer CSS cannot break the panel; a sanitizer miss executes in our frame. |
+| Agent-triggered AI summaries, queued on BullMQ | Generate every time an agent opens a thread | Cost tracks support work, not inbox browsing. The API process never waits 30s on the model. Daily cap, cooldown, JSON schema, staleness watermark. |
+| Caddy on-demand TLS, gated by `/internal/tls/ask` | Paid custom-hostname SaaS from day one | Real HTTPS for verified KB domains without a per-hostname vendor. Unverified names never get a certificate. Let’s Encrypt rate limits are the known ceiling. |
+| Postgres FTS + `pg_trgm` | Elasticsearch | Assignment volume does not pay for another cluster. Widget mid-word suggestions still work. |
+| Inbound email as a signed webhook (Brevo), not IMAP | Poll a mailbox | Idempotency, signature verify-before-persist, and threading live in the same transaction as the inbox row. |
+| Narrow automated tests (isolation, sockets, tokens, replay, sanitizer, dedup) | Broad UI coverage | The bugs that fail the rubric are invisible in a happy-path clickthrough. Flows are manual; the suite is for the expensive invariants. |
+
+### What we deferred
+
+| Deferred | Why now | When it would change |
+|---|---|---|
+| Attachments | Object storage, virus scan, and a much larger XSS surface than the grading value | When file upload is a scored requirement |
+| Horizontal API replicas | Redis adapter is wired; one VM is the live deploy and untested at N | Real load, more than one `api` container |
+| Automated DB backups | Out of scope for a single-box demo — **unacceptable** as real production | A second disk / managed Postgres before any real customers |
+| Generate-on-open summaries | Would bill for every curious click | If the product brief forbids agent-triggered generation |
+| Per-agent read cursors | Shared inbox; two integers on the conversation cover the UI | Personal inboxes |
+| Public REST API / outbound webhooks | Inbound email already is a webhook; a partner API is stretch | Integrations |
+| Stretch: auto-reply drafts, canned responses, contact timeline, SLA, analytics | Same week as a working unified inbox and widget | After M1–M7 are boring |
+| Recovering anonymous chat after `localStorage` clear | Identity is the browser; pretending otherwise lies to the agent | Optional “email yourself a continuation link” |
+| Workspace deletion / hard-delete of KB articles | Unpublish and leave history; delete is a recovery problem | Compliance export + tombstones |
+
+### How those decisions are recorded
+
+- **This section** is the evaluator-facing summary: prioritized vs deferred in one place.
+- **[documentation/14-choices.md](documentation/14-choices.md)** is the living list; other files in `documentation/` explain the mechanism (sequences, cookies, Caddy ask, AI queue), not a second set of opinions.
+- **Known limitations** below are the bill for the table above — same facts, phrased as constraints, not as TODOs.
+- **Code comments** point at `documentation/` when a non-obvious constraint (tenant Prisma guard, cookie apex, tls/ask) would otherwise look like a quirk.
+
+A skipped stretch feature is not listed under “coming soon.” If it is not in the prioritized table, it is out of scope for this repo.
 
 ## Local setup
 
-Requires Docker and Docker Compose. Node 20+ only if you want to run the dashboard outside Docker.
+Requires Docker Compose. Node 20+ only if you run the dashboard outside Docker.
 
 ```bash
-git clone <repo-url> && cd gigachad-app
-cp .env.example .env     # fill in the values below
+git clone https://github.com/DevanshuSingh99/gigachad-app.git
+cd gigachad-app
+cp .env.example .env     # fill in the table below
 docker compose up -d --build
 ```
 
-That is the whole backend: PostgreSQL, Redis, migrations, API, and worker. API on `http://localhost:3000`, public KB on `http://localhost:3000/kb/<workspace-slug>`.
+Backend: Postgres, Redis, migrations, API, worker. API at `http://localhost:3000`. Public KB at `/api/v1/public/<workspace-slug>/kb`.
 
-The dashboard runs separately during development:
+Dashboard:
 
 ```bash
 npm install
-npm run dev --workspace apps/dashboard
+npm run dev --workspace @gigachad/dashboard
 ```
 
-Visit `http://localhost:3001/signup` to create the first workspace, and `http://localhost:3001/demo` for the widget.
+Signup: `http://localhost:3001/signup`. Local widget demo: `npm run dev --workspace @gigachad/demo` (port 5500).
 
-### Deploying
-
-Backend, on the VM:
-
-```bash
-git pull && docker compose up -d --build
-```
-
-The same command as local development — `COMPOSE_FILE` in the VM's `.env` selects the production overlay that adds Caddy, restart policies, and resource limits, so nothing is typed differently in production.
-
-Frontend deploys itself: Cloudflare Pages builds on push. Full setup, including the DNS records and the custom domain the cookie auth depends on, is in [docs/10-deployment.md](docs/10-deployment.md).
-
-### Environment variables
-
-**VM** (`.env`, read by Compose):
+### Environment (VM / Compose)
 
 | Variable | Purpose |
 |---|---|
-| `COMPOSE_FILE` | Set to `compose.yaml:compose.prod.yaml` on the VM; omit locally |
-| `POSTGRES_PASSWORD` | Database password |
-| `DATABASE_URL` | Connection string. Append `?connection_limit=8` for the API, `4` for the worker |
-| `REDIS_URL` | Redis connection string |
-| `SESSION_SECRET` | Random 32+ byte secret for session token hashing |
-| `COOKIE_DOMAIN` | `.example.com` — must be the apex shared with the dashboard |
-| `API_URL` | Public API base URL |
-| `DASHBOARD_ORIGIN` | Exact dashboard origin, for CORS and CSRF origin checks |
-| `KB_HOST` | Default public KB hostname |
-| `KB_CNAME_TARGET` | Hostname customers point their `CNAME` at |
-| `INBOUND_EMAIL_DOMAIN` | Inbound subdomain, e.g. `inbound.example.com` |
-| `BREVO_API_KEY` | Transactional send |
-| `BREVO_WEBHOOK_SIGNING_SECRET` | Inbound webhook verification |
-| `MAIL_FROM` | Sender address on the verified sending domain |
-| `OPENAI_API_KEY` | Omit to run with AI disabled; the rest of the product works |
-| `OPENAI_MODEL` | Model id for summaries |
-| `AI_SUMMARY_MIN_MESSAGES` | Summary threshold, default `6` |
+| `COMPOSE_FILE` | `compose.yaml:compose.prod.yaml:compose.caddy.yaml` on the VM; omit locally |
+| `POSTGRES_PASSWORD` / `DATABASE_URL` | Postgres. Append `?connection_limit=8` (API) / `4` (worker) |
+| `REDIS_URL` | Redis |
+| `SESSION_SECRET` | 32+ random bytes |
+| `COOKIE_DOMAIN` | `.apex` shared with the dashboard; empty locally |
+| `API_URL` / `DASHBOARD_ORIGIN` | Public API URL; exact dashboard origin (CORS + CSRF) |
+| `KB_HOST` / `KB_CNAME_TARGET` | Default public KB host; CNAME target for customers |
+| `INBOUND_EMAIL_DOMAIN` | Host part of the mailbox, e.g. `inbound.example.com` → `slug@inbound.example.com` |
+| `BREVO_API_KEY` / `BREVO_WEBHOOK_SIGNING_SECRET` | Send + inbound verify |
+| `MAIL_FROM` | Authenticated sending domain (not the inbound host) |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | Omit to run with AI disabled |
+| `AI_SUMMARY_MIN_MESSAGES` | Default `6` |
 
-**Cloudflare Pages** (build-time):
+Pages build-time: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_WIDGET_ASSET_URL`.
 
-| Variable | Purpose |
-|---|---|
-| `NEXT_PUBLIC_API_URL` | API base URL |
-| `NEXT_PUBLIC_WS_URL` | Socket.IO URL |
-| `NEXT_PUBLIC_WIDGET_ASSET_URL` | Widget asset base URL |
+Missing required values refuse to boot (`apps/api/src/env.ts`).
 
-All are validated at startup or build; the process refuses to boot on a missing required value rather than failing later.
+Email DNS (not in this repo): SPF/DKIM on the sending domain; MX on `INBOUND_EMAIL_DOMAIN` to Brevo; webhooks to `/api/v1/webhooks/email/inbound` and `/events`. Details: [documentation/08-email.md](documentation/08-email.md).
 
-### Provider configuration
-
-Email requires DNS work that cannot be done from code — see the hour-zero checklist in [docs/07-email.md](docs/07-email.md):
-
-1. Brevo domain authentication (DKIM + SPF records).
-2. `MX` records for `inbound.<domain>` pointing at Brevo's inbound hosts.
-3. Inbound webhook set to `https://<app-host>/api/v1/webhooks/email/inbound`.
-4. Delivery events webhook set to `https://<app-host>/api/v1/webhooks/email/events`.
-
-Each workspace's support address is `<workspace-slug>@inbound.<domain>`, shown in workspace settings.
-
-Custom domains need no provider account: the customer adds a `CNAME` to `KB_CNAME_TARGET` plus a `TXT` ownership token, clicks Verify, and Caddy issues a certificate on the first HTTPS request. If their domain sits behind a proxying CDN, the `CNAME` must be DNS-only or the HTTP-01 challenge is intercepted.
-
-## Testing
+### Tests
 
 ```bash
 npm test
 ```
 
-Covers cross-workspace access across every resource, Socket.IO room isolation, widget token scope, webhook signature and replay handling, HTML sanitization on articles and inbound email, message deduplication, and conversation status transitions. Scope and reasoning: [docs/13-testing-strategy.md](docs/13-testing-strategy.md).
+Needs Postgres and Redis on localhost for the HTTP/socket suite (`docker compose up -d postgres redis`). Without them those cases skip; unit tests still run. Scope: [documentation/13-testing.md](documentation/13-testing.md).
 
 ## Known limitations
 
-- No automated database backups. The single VM holds the only copy of the data.
-- Automated coverage is narrow by design; most verification is manual.
-- Presence is best-effort with a 30s heartbeat timeout — no historical presence or explicit availability status.
-- AI summaries are generated on request rather than automatically when an agent opens a conversation. This is a knowing deviation from the requirement's wording; reasoning in [docs/11-tradeoffs.md](docs/11-tradeoffs.md).
+These are the cost of the [trade-offs](#trade-off-decisions), not a backlog.
+
+- No automated database backups. The VM holds the only copy of the data.
+- Automated coverage is narrow; most flows are verified by hand.
+- Presence is best-effort (30s heartbeat). No historical presence.
+- AI summaries are on request, not on every inbox open. Reasoning: [documentation/09-ai.md](documentation/09-ai.md).
 - One support mailbox per workspace.
-- Anonymous chat history is scoped to browser storage; clearing it creates a new contact.
+- Anonymous chat identity is browser storage.
 - Workspace deletion is not implemented.
-- Attachments are not supported on either channel.
-- Custom domain certificates are issued per hostname on the origin, which is exposed to Let's Encrypt rate limits at volume. Cloudflare Custom Hostnames is the documented migration path.
-- Single app instance: the Socket.IO Redis adapter is wired but untested under horizontal scale.
-- The dashboard must be served from a subdomain of the API's apex domain. A `*.pages.dev` URL will not authenticate, because the session cookie becomes third-party.
-- The backend image builds on the VM, so a deploy briefly competes with PostgreSQL for memory. Swap covers it; a busier box would want the build moved off-host.
+- No attachments.
+- Custom-domain certificates are issued per hostname by Caddy / Let’s Encrypt, so high volume can hit CA rate limits. Cloudflare Custom Hostnames is the documented scale-up path.
+- Single app instance. Socket.IO Redis adapter is untested under horizontal scale.
+- Dashboard must share an apex with the API. A `*.pages.dev` URL will not send the session cookie.

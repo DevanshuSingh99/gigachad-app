@@ -2,6 +2,8 @@
 
 Written from how the code is actually structured, not from a prior design dump.
 
+The evaluator-facing version (prioritize / defer / where it is written down) lives in the root [README](../README.md#trade-off-decisions). This file is the same decisions with less submission framing.
+
 ## Prioritized
 
 **One transactional backend.** Chat, email, and assignment changes share rows and locks. A sequence gap or a cross-tenant write is worse than an extra deploy unit.
@@ -30,6 +32,10 @@ Written from how the code is actually structured, not from a prior design dump.
 | Generate-on-open summaries | Would bill for every curious click |
 | Per-agent unread | Product is a shared inbox; two integers on the conversation cover the UI |
 | Public API / webhooks out | Inbound email already is a webhook; a partner API is stretch |
+
+## How these are documented
+
+README **Trade-off decisions** is the summary a reviewer reads first. This file stays the canonical list. Mechanism lives next to the subsystem (`04-data-model.md` for sequences, `11-security.md` for cookies, `10-knowledge-base.md` for Caddy ask, `09-ai.md` for generate-on-request). Known limitations in the README are the same choices restated as constraints. Nothing in this table is tracked as a TODO.
 
 ## Known limits to say out loud
 
